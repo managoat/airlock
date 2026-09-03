@@ -80,10 +80,15 @@ session.
 
 **Finding 2 — the `function_exported?` trap**, in the escript section below.
 
-**Open question — is `provision.ex` the tenth library?** "Get a box up with a
-runtime on it, ready for ACP" is now the one piece two separate products have
-both written. Two consumers is the extraction signal the campaign has used all
-along. Worth raising before Airlock writes a third copy.
+**Settled — `provision.ex` is not the tenth library.** Decided 2026-09-03; the
+reasoning and the revisit condition are in `PLAN.md`'s open questions. Short
+version: about 50 of its 227 lines transfer, its env precedence runs the
+opposite direction to Airlock's, and goatherd never applies a network policy or
+installs skills — so the ordering it calls hard-won is missing both the
+terminal seal and the skills-before-lockdown constraint Airlock is built
+around. Airlock writes its own. The one thing that did go upstream is a safe
+dispatcher for `managoat_runtimes`' four optional callbacks, shipped in 0.3.0;
+see the `function_exported?` trap below.
 
 ### Why goatherd could not have been Airlock
 
@@ -153,7 +158,7 @@ its ADR 0037 and graduated in #1345 / #1368. Source lives at
 | Package | Latest | What it gives Airlock | What you supply |
 |---|---|---|---|
 | `managoat_sandbox` | 0.2.1 | The machine layer: create / exec / spawn / attach / suspend / destroy over Sprites, E2B and Daytona, one error taxonomy, a conformance case and a `Fake`. Default-deny egress via `NetworkPolicy`. | Nothing. goatherd already uses it. |
-| `managoat_runtimes` | 0.2.1 | Gets claude, codex, gemini or opencode onto a box and up on ACP: pinned adapter versions, file layout, instructions file, skills tree, credential delivery, per-runtime quirks. | Nothing. goatherd already uses it. |
+| `managoat_runtimes` | 0.3.0 | Gets claude, codex, gemini or opencode onto a box and up on ACP: pinned adapter versions, file layout, instructions file, skills tree, credential delivery, per-runtime quirks. 0.3.0 adds the optional-callback dispatchers. | Nothing. Pin `~> 0.3`; 0.2.x has no dispatchers. |
 | `managoat_acp` | 0.1.2 | The session: `Peer`, `Protocol`, `Blocks`, `Permissions`, `Usage`, `Tracer`. One block format and one permission model across all four runtimes. | Nothing. goatherd already uses it. |
 | `managoat_broker` | 0.4.0 | **The reason this product exists.** Rules matching `host[:port][/path]` across six schemes, `unmatched_host_policy: :deny`, expiring sessions, and a terminal per-request telemetry event carrying status, error and duration. | A `Broker.Store` (`Store.Memory` is the reference) and a CA seed. |
 | `managoat_runner` | 0.2.1 | A daemon on the user's own machine, dialling out over a WebSocket, presenting as a sandbox provider. The cheapest path to a reachable broker. | A `Runner.Host`; `Host.Local` over a plain `Registry` is likely enough. |
@@ -194,7 +199,7 @@ whole product.
 | Policy: parse, store, compile | ~250 lines | YAML in; `Broker.Rule` structs and a `Sandbox.NetworkPolicy` out. goatherd already parses a YAML herd file, so the parsing half has a pattern to follow. |
 | Broker wiring and a `Store` | ~200 lines | Start the broker beside the app, mint a session per run, hand the box its proxy address and placeholders. `Store.Memory` is the reference implementation. |
 | The record | ~400 lines | A telemetry handler on `[:managoat, :broker, :request]`, storage, and a view with four tabs: Transcript, Egress, Tools, Changes. |
-| Provisioning with a policy | ~250 lines | A box up with a runtime on it, plus the network policy and the proxy environment. goatherd's `provision.ex` is the same job without the last two; see whether it should become a library rather than a third copy. |
+| Provisioning with a policy | ~250 lines | A box up with a runtime on it, plus the network policy and the proxy environment. Airlock writes its own — goatherd's `provision.ex` shares roughly 50 lines and, having no policy step, does not encode the ordering that matters here: packages, skills and npm all run *before* the seal. |
 | The thing that drives a turn | ~350 lines | Not goatherd's `driver.ex` — that is deliberately the CLI process, and Airlock has a second consumer and a persisted artefact. |
 
 One deferred extraction: `Fountain.SandboxFiles` (479 lines, Fountain ADR 0039)
@@ -250,6 +255,13 @@ in goatherd. They are not hypothetical.
   `Code.ensure_loaded?(mod) and function_exported?(mod, f, a)`. Test it by
   purging the module first, because merely calling the function loads it and
   the test passes either way.
+
+  **For `managoat_runtimes`' own callbacks, do not write the guard at all.**
+  0.3.0 shipped `Runtimes.default_env/3`, `write_config/3` and
+  `prepare_sandbox/4`, which dispatch and fall back to the documented no-op,
+  plus `implements?/3` for `build_command/5`, which has no default. Call
+  those. The guard above remains correct for any *other* optional callback
+  Airlock dispatches, which is why it stays here.
 - An escript does not start applications and never runs `config/runtime.exs`.
   Whatever entry point you write does both jobs explicitly.
 

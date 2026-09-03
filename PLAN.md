@@ -163,10 +163,41 @@ Two notes before implementing it:
 
 ## Open questions
 
-1. **Is provisioning the tenth library?** "Get a box up with a runtime on it,
-   ready for ACP" has now been written twice — goatherd's `provision.ex` and
-   whatever M0 writes here. Two consumers is the extraction signal the campaign
-   has used all along. Settle this before writing a third copy.
+1. ~~**Is provisioning the tenth library?**~~ **Settled 2026-09-03: no.** M0
+   writes its own provisioning. The two-consumers signal misfires because the
+   two consumers are not consumers of the same thing — roughly 50 of
+   `provision.ex`'s 227 lines transfer. Its `packages` / `clone` / `setup`
+   steps read herd-file fields the policy schema does not have; its
+   `sprite_env/4` lifts real secrets from the local shell *into* the box,
+   which is the exact inversion of what Airlock does. Decisively: goatherd
+   never calls `Sandbox.apply_network_policy/2` and never installs skills, so
+   the ordering its moduledoc calls the hard-won part is a strict subset of
+   Airlock's, missing the terminal seal and the
+   skills-before-lockdown constraint that `Runtimes.Skills` documents.
+   Extracting now would freeze a sequence before the only product with a
+   policy has ever run one. There is also no proxy or CA handling anywhere in
+   the nine libraries, so the piece Airlock adds has no second consumer at all.
+
+   **Revisit when** a third consumer needs the *sealed* ordering — provision,
+   then apply a network policy — not merely "a box with a runtime on it". At
+   that point the thing to extract is the seal, and Airlock will have run it
+   in anger.
+
+   **The extraction that was real, and it was not a tenth library — now
+   shipped.** `Managoat.Runtimes` declared four optional callbacks and no safe
+   way to call them, so every host had to rediscover the `function_exported?`
+   trap on the library's own callbacks. Filed as managoat/managoat_runtimes#7
+   and released in **0.3.0**: `default_env/3`, `write_config/3` and
+   `prepare_sandbox/4` dispatch and fall back to the documented no-op, and
+   `implements?/3` answers the same question for `build_command/5`, which has
+   no default to fall back to. All four call `Code.ensure_loaded?/1` first.
+
+   **So Airlock never writes the guard for these callbacks — it calls the
+   dispatchers.** The trap still applies to any *other* optional-callback
+   dispatch Airlock writes; see `CLAUDE.md`.
+
+   M0 pins `{:managoat_runtimes, "~> 0.3"}`. Anything resolving to 0.2.x gets
+   a library without the dispatchers.
 2. **Claude subscription auth versus an API key**, on a box someone else
    operates. The API key path is unambiguous and is what `managoat_runtimes`
    already does. Subscription auth is what most people are actually on, and it
