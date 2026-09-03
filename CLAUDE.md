@@ -86,9 +86,9 @@ version: about 50 of its 227 lines transfer, its env precedence runs the
 opposite direction to Airlock's, and goatherd never applies a network policy or
 installs skills — so the ordering it calls hard-won is missing both the
 terminal seal and the skills-before-lockdown constraint Airlock is built
-around. Airlock writes its own. What *should* go upstream is a safe dispatcher
-for `managoat_runtimes`' four optional callbacks; see the `function_exported?`
-trap below.
+around. Airlock writes its own. The one thing that did go upstream is a safe
+dispatcher for `managoat_runtimes`' four optional callbacks, shipped in 0.3.0;
+see the `function_exported?` trap below.
 
 ### Why goatherd could not have been Airlock
 
@@ -158,7 +158,7 @@ its ADR 0037 and graduated in #1345 / #1368. Source lives at
 | Package | Latest | What it gives Airlock | What you supply |
 |---|---|---|---|
 | `managoat_sandbox` | 0.2.1 | The machine layer: create / exec / spawn / attach / suspend / destroy over Sprites, E2B and Daytona, one error taxonomy, a conformance case and a `Fake`. Default-deny egress via `NetworkPolicy`. | Nothing. goatherd already uses it. |
-| `managoat_runtimes` | 0.2.1 | Gets claude, codex, gemini or opencode onto a box and up on ACP: pinned adapter versions, file layout, instructions file, skills tree, credential delivery, per-runtime quirks. | Nothing. goatherd already uses it. |
+| `managoat_runtimes` | 0.3.0 (`main`; hex is still 0.2.1) | Gets claude, codex, gemini or opencode onto a box and up on ACP: pinned adapter versions, file layout, instructions file, skills tree, credential delivery, per-runtime quirks. 0.3.0 adds the optional-callback dispatchers. | Nothing — but 0.3.0 is unpublished, so pinning `~> 0.2` from hex silently gets you a library without the dispatchers. |
 | `managoat_acp` | 0.1.2 | The session: `Peer`, `Protocol`, `Blocks`, `Permissions`, `Usage`, `Tracer`. One block format and one permission model across all four runtimes. | Nothing. goatherd already uses it. |
 | `managoat_broker` | 0.4.0 | **The reason this product exists.** Rules matching `host[:port][/path]` across six schemes, `unmatched_host_policy: :deny`, expiring sessions, and a terminal per-request telemetry event carrying status, error and duration. | A `Broker.Store` (`Store.Memory` is the reference) and a CA seed. |
 | `managoat_runner` | 0.2.1 | A daemon on the user's own machine, dialling out over a WebSocket, presenting as a sandbox provider. The cheapest path to a reachable broker. | A `Runner.Host`; `Host.Local` over a plain `Registry` is likely enough. |
@@ -255,6 +255,13 @@ in goatherd. They are not hypothetical.
   `Code.ensure_loaded?(mod) and function_exported?(mod, f, a)`. Test it by
   purging the module first, because merely calling the function loads it and
   the test passes either way.
+
+  **For `managoat_runtimes`' own callbacks, do not write the guard at all.**
+  0.3.0 shipped `Runtimes.default_env/3`, `write_config/3` and
+  `prepare_sandbox/4`, which dispatch and fall back to the documented no-op,
+  plus `implements?/3` for `build_command/5`, which has no default. Call
+  those. The guard above remains correct for any *other* optional callback
+  Airlock dispatches, which is why it stays here.
 - An escript does not start applications and never runs `config/runtime.exs`.
   Whatever entry point you write does both jobs explicitly.
 

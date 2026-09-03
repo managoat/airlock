@@ -183,14 +183,24 @@ Two notes before implementing it:
    that point the thing to extract is the seal, and Airlock will have run it
    in anger.
 
-   **The extraction that is real, and it is not a tenth library:**
-   `Managoat.Runtimes` declares `@optional_callbacks build_command: 5,
-   default_env: 2, write_config: 2, prepare_sandbox: 3` and ships no safe
-   dispatcher for any of them — `ensure_loaded?` appears nowhere in the
-   library. Every host must independently rediscover the `function_exported?`
-   trap on the library's own callbacks, and goatherd already paid for it once.
-   Three one-line dispatchers in `managoat_runtimes` retire the trap for every
-   host. Raise it upstream rather than copying the guard a third time.
+   **The extraction that was real, and it was not a tenth library — now
+   shipped.** `Managoat.Runtimes` declared four optional callbacks and no safe
+   way to call them, so every host had to rediscover the `function_exported?`
+   trap on the library's own callbacks. Filed as managoat/managoat_runtimes#7
+   and released in **0.3.0**: `default_env/3`, `write_config/3` and
+   `prepare_sandbox/4` dispatch and fall back to the documented no-op, and
+   `implements?/3` answers the same question for `build_command/5`, which has
+   no default to fall back to. All four call `Code.ensure_loaded?/1` first.
+
+   **So Airlock never writes the guard for these callbacks — it calls the
+   dispatchers.** The trap still applies to any *other* optional-callback
+   dispatch Airlock writes; see `CLAUDE.md`.
+
+   One catch for M0's `mix.exs`: **0.3.0 is on `main` but not published to
+   hex** — hex's latest stable is still 0.2.1. Until it is published, reaching
+   the dispatchers means a git dependency. Not blocking, because no code
+   exists yet, but decide it deliberately rather than pinning `~> 0.2` and
+   quietly getting a library without them.
 2. **Claude subscription auth versus an API key**, on a box someone else
    operates. The API key path is unambiguous and is what `managoat_runtimes`
    already does. Subscription auth is what most people are actually on, and it
