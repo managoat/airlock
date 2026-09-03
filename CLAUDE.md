@@ -80,10 +80,15 @@ session.
 
 **Finding 2 — the `function_exported?` trap**, in the escript section below.
 
-**Open question — is `provision.ex` the tenth library?** "Get a box up with a
-runtime on it, ready for ACP" is now the one piece two separate products have
-both written. Two consumers is the extraction signal the campaign has used all
-along. Worth raising before Airlock writes a third copy.
+**Settled — `provision.ex` is not the tenth library.** Decided 2026-09-03; the
+reasoning and the revisit condition are in `PLAN.md`'s open questions. Short
+version: about 50 of its 227 lines transfer, its env precedence runs the
+opposite direction to Airlock's, and goatherd never applies a network policy or
+installs skills — so the ordering it calls hard-won is missing both the
+terminal seal and the skills-before-lockdown constraint Airlock is built
+around. Airlock writes its own. What *should* go upstream is a safe dispatcher
+for `managoat_runtimes`' four optional callbacks; see the `function_exported?`
+trap below.
 
 ### Why goatherd could not have been Airlock
 
@@ -194,7 +199,7 @@ whole product.
 | Policy: parse, store, compile | ~250 lines | YAML in; `Broker.Rule` structs and a `Sandbox.NetworkPolicy` out. goatherd already parses a YAML herd file, so the parsing half has a pattern to follow. |
 | Broker wiring and a `Store` | ~200 lines | Start the broker beside the app, mint a session per run, hand the box its proxy address and placeholders. `Store.Memory` is the reference implementation. |
 | The record | ~400 lines | A telemetry handler on `[:managoat, :broker, :request]`, storage, and a view with four tabs: Transcript, Egress, Tools, Changes. |
-| Provisioning with a policy | ~250 lines | A box up with a runtime on it, plus the network policy and the proxy environment. goatherd's `provision.ex` is the same job without the last two; see whether it should become a library rather than a third copy. |
+| Provisioning with a policy | ~250 lines | A box up with a runtime on it, plus the network policy and the proxy environment. Airlock writes its own — goatherd's `provision.ex` shares roughly 50 lines and, having no policy step, does not encode the ordering that matters here: packages, skills and npm all run *before* the seal. |
 | The thing that drives a turn | ~350 lines | Not goatherd's `driver.ex` — that is deliberately the CLI process, and Airlock has a second consumer and a persisted artefact. |
 
 One deferred extraction: `Fountain.SandboxFiles` (479 lines, Fountain ADR 0039)

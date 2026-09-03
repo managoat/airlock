@@ -163,10 +163,34 @@ Two notes before implementing it:
 
 ## Open questions
 
-1. **Is provisioning the tenth library?** "Get a box up with a runtime on it,
-   ready for ACP" has now been written twice — goatherd's `provision.ex` and
-   whatever M0 writes here. Two consumers is the extraction signal the campaign
-   has used all along. Settle this before writing a third copy.
+1. ~~**Is provisioning the tenth library?**~~ **Settled 2026-09-03: no.** M0
+   writes its own provisioning. The two-consumers signal misfires because the
+   two consumers are not consumers of the same thing — roughly 50 of
+   `provision.ex`'s 227 lines transfer. Its `packages` / `clone` / `setup`
+   steps read herd-file fields the policy schema does not have; its
+   `sprite_env/4` lifts real secrets from the local shell *into* the box,
+   which is the exact inversion of what Airlock does. Decisively: goatherd
+   never calls `Sandbox.apply_network_policy/2` and never installs skills, so
+   the ordering its moduledoc calls the hard-won part is a strict subset of
+   Airlock's, missing the terminal seal and the
+   skills-before-lockdown constraint that `Runtimes.Skills` documents.
+   Extracting now would freeze a sequence before the only product with a
+   policy has ever run one. There is also no proxy or CA handling anywhere in
+   the nine libraries, so the piece Airlock adds has no second consumer at all.
+
+   **Revisit when** a third consumer needs the *sealed* ordering — provision,
+   then apply a network policy — not merely "a box with a runtime on it". At
+   that point the thing to extract is the seal, and Airlock will have run it
+   in anger.
+
+   **The extraction that is real, and it is not a tenth library:**
+   `Managoat.Runtimes` declares `@optional_callbacks build_command: 5,
+   default_env: 2, write_config: 2, prepare_sandbox: 3` and ships no safe
+   dispatcher for any of them — `ensure_loaded?` appears nowhere in the
+   library. Every host must independently rediscover the `function_exported?`
+   trap on the library's own callbacks, and goatherd already paid for it once.
+   Three one-line dispatchers in `managoat_runtimes` retire the trap for every
+   host. Raise it upstream rather than copying the guard a third time.
 2. **Claude subscription auth versus an API key**, on a box someone else
    operates. The API key path is unambiguous and is what `managoat_runtimes`
    already does. Subscription auth is what most people are actually on, and it
