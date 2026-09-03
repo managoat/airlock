@@ -58,7 +58,7 @@ Where the 2,042 lines actually go, and what transfers:
 | goatherd module | Lines | To Airlock |
 |---|---|---|
 | `driver.ex` | 551 | **Its reasoning does not transfer.** Its moduledoc argues the driver should be the CLI process rather than a GenServer, because there is one turn per invocation and the terminal is its only consumer. Airlock has a second consumer (the record), a persisted artefact, and a broker session whose lifetime brackets the turn. Different answer. |
-| `cli.ex` | 453 | Only if Airlock is also a CLI, which is open. |
+| `cli.ex` | 453 | Airlock is a CLI too (settled question 3), so this is worth reading for shape — though its commands are goatherd's, not Airlock's. |
 | `provision.ex` | 227 | **The genuinely shared piece.** Get a box up with a runtime on it, ready for ACP. Airlock needs the same thing plus a network policy and proxy environment. |
 | `config.ex` | 183 | A pattern for the policy parser, not code. Different schema. |
 | `auth.ex` | 167 | Different job — Airlock's whole point is that credentials go to the broker, not to the box. |
@@ -67,7 +67,8 @@ Where the 2,042 lines actually go, and what transfers:
 | `keychain.ex` | 65 | Reusable as-is if Airlock reads macOS keychain credentials. |
 
 So roughly 300 of 2,042 lines are shared surface. What genuinely transfers is
-two findings and one open question.
+two findings — and a question, since settled, about whether provisioning should
+have been shared at all.
 
 **Finding 1 — durability is the sandbox's, not the client's.** The adapter is
 spawned `detachable: true`, so it keeps running in the sandbox when the driving
@@ -81,7 +82,7 @@ session.
 **Finding 2 — the `function_exported?` trap**, in the escript section below.
 
 **Settled — `provision.ex` is not the tenth library.** Decided 2026-09-03; the
-reasoning and the revisit condition are in `PLAN.md`'s open questions. Short
+reasoning and the revisit condition are in `PLAN.md`'s settled questions. Short
 version: about 50 of its 227 lines transfer, its env precedence runs the
 opposite direction to Airlock's, and goatherd never applies a network policy or
 installs skills — so the ordering it calls hard-won is missing both the
@@ -161,7 +162,7 @@ its ADR 0037 and graduated in #1345 / #1368. Source lives at
 | `managoat_runtimes` | 0.3.0 | Gets claude, codex, gemini or opencode onto a box and up on ACP: pinned adapter versions, file layout, instructions file, skills tree, credential delivery, per-runtime quirks. 0.3.0 adds the optional-callback dispatchers. | Nothing. Pin `~> 0.3`; 0.2.x has no dispatchers. |
 | `managoat_acp` | 0.1.2 | The session: `Peer`, `Protocol`, `Blocks`, `Permissions`, `Usage`, `Tracer`. One block format and one permission model across all four runtimes. | Nothing. goatherd already uses it. |
 | `managoat_broker` | 0.4.0 | **The reason this product exists.** Rules matching `host[:port][/path]` across six schemes, `unmatched_host_policy: :deny`, expiring sessions, and a terminal per-request telemetry event carrying status, error and duration. | A `Broker.Store` (`Store.Memory` is the reference) and a CA seed. |
-| `managoat_runner` | 0.2.1 | A daemon on the user's own machine, dialling out over a WebSocket, presenting as a sandbox provider. The cheapest path to a reachable broker. | A `Runner.Host`; `Host.Local` over a plain `Registry` is likely enough. |
+| `managoat_runner` | 0.2.1 | A daemon on the user's own machine, dialling out over a WebSocket, presenting as a sandbox provider. The cheapest path to a reachable broker, and the box for M0 through M2. | A `Runner.Host`. `Host.Local` over a plain `Registry` is the guess; it is M0's first task and the guess is unverified. |
 | `managoat_substitution` | 0.1.1 | `${VAR}` over nested config, reporting every missing key at once. | Nothing. |
 | `managoat_mcp_auth` | 0.1.1 | MCP authorization discovery (RFC 9728 / 8414 / 7591) behind an SSRF guard. | Only once policies can name MCP servers. |
 | `managoat_docs` | 0.1.1 | A compile-time embedded manual and its guardrail tests. | Optional, if Airlock grows a `/docs`. |
@@ -209,18 +210,24 @@ out of Fountain into a library when it is needed, not before.
 
 ## Shape of the codebase
 
-Deliberately undecided, because goatherd changed the inputs. What is known:
+Settled 2026-09-03. The reasoning for each is in `PLAN.md`'s settled questions.
 
+- **An escript CLI**, like goatherd. Not Phoenix. The record is written out as
+  a self-contained HTML file rather than served, because the product claim is
+  that you can hand someone the record — and a file is handable in a way a
+  localhost route is not. A console can come later; nothing here forecloses it.
 - **Not an umbrella.** There is no second deployable and no library being
   extracted here.
-- **Probably no database.** Goatherd's finding stands: durability is the
-  sandbox's. The record is the one thing that genuinely wants storage, and it
-  may be files on disk before it is SQLite.
-- **The broker must be reachable from the box** — see the constraint section.
-  Local-runner-first sidesteps this entirely.
-- A console is wanted eventually, because the record is a page. Whether that is
-  Phoenix from day one or an exported HTML file first is an open question worth
-  answering late.
+- **No database.** Goatherd's finding stands: durability is the sandbox's. The
+  record is files on disk.
+- **A local box via `managoat_runner`**, which makes the broker trivially
+  reachable. Airlock writes the `Runner.Host`. Cloud providers arrive at M3.
+- **A box is per-job** and destroyed after, so a run's record describes a box
+  nothing else touched.
+
+Because it is an escript, re-read the escript traps below before writing the
+entry point: applications are not started, `config/runtime.exs` never runs, and
+`function_exported?/3` is not a guard.
 
 ## Conventions
 

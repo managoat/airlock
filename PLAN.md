@@ -25,19 +25,34 @@ never holds, and does the egress log come out legible?
 A throwaway is fine. `mix new`, the hex packages, no console, no database. A
 script that:
 
-1. Reads a policy file and credentials from the environment.
-2. Provisions a box with `NetworkPolicy` set from the policy's `allow` list.
+1. Brings up a `Runner.Host` so `managoat_runner` can present a local box.
+   Genuinely first — everything below needs a box, and `Host.Local` over a
+   plain `Registry` is a guess the brief makes, not a measurement.
+2. Reads a policy file and credentials from the environment.
 3. Starts the broker with a `Store.Memory` holding one session compiled from the
    policy's `credentials`, with `unmatched_host_policy: :deny`.
-4. Brings up one runtime on the box, with the inference key delivered as a
-   `:substitute` placeholder rather than the real value.
-5. Runs one prompt to completion over `Managoat.ACP.Peer`.
-6. Prints the transcript, and the egress log from a telemetry handler on
+4. Provisions a box — **still unsealed**. Packages, skills and npm all reach
+   the network here, so no `NetworkPolicy` yet.
+5. Brings up one runtime on it, with the inference credential delivered as a
+   `:substitute` placeholder rather than the real value, and the proxy
+   environment pointing at the broker. Dispatch the runtime's optional
+   callbacks through `Runtimes.default_env/3` and friends; never write the
+   `function_exported?/3` guard.
+6. **Seals the box**: `apply_network_policy/2` from the policy's `allow` list.
+   This is the last thing before the agent runs, and it is the step with no
+   prior art — goatherd never sealed a box — so it is the part worth a test.
+7. Runs one prompt to completion over `Managoat.ACP.Peer`.
+8. Prints the transcript, and the egress log from a telemetry handler on
    `[:managoat, :broker, :request]`.
+9. Destroys the box.
 
-Do it against a **local box** first — `managoat_runner`, or any sandbox on the
-same machine as the broker — so reachability is not a variable while the
-credential path is being proven. Mind that this is exactly the
+Note that steps 3 and 6 interact: the box reaches its allowed hosts *through*
+the broker, so whatever the seal permits has to include the broker's own
+address. Work out what `allow` compiles to on both layers before writing
+either — it is the first place the two-layer design gets tested for real.
+
+The box is **local**, via `managoat_runner`, so reachability is not a variable
+while the credential path is being proven. Mind that this is exactly the
 `allow_private_upstreams` case; think it through rather than flipping the flag.
 
 **Done when:** the agent completes a task that requires network access; the box
@@ -84,8 +99,10 @@ What turns a utility into a product.
     into a library; not before.
 - Export a run as a single file someone else can read.
 
-Whether the view is Phoenix from the start or an exported HTML file first is
-deliberately open. The record is a page, not necessarily a server.
+The view is an exported HTML file, not a server — settled question 3. So
+"export a run as a single file someone else can read" is not a separate bullet
+from the four tabs above; it is the same artefact. Build the tabs into the
+export rather than building a view and an exporter.
 
 **Done when:** an agent given a scoped API key tries to reach a host the policy
 does not name, and the run record shows the denial, the rule and the moment it
@@ -150,7 +167,7 @@ unmatched: deny
 expires_in: "4h"
 ```
 
-Two notes before implementing it:
+Three notes before implementing it:
 
 - `allow` and `credentials` are different layers. `allow` is the sandbox's own
   default-deny egress policy; `credentials` is what the proxy does with a request
@@ -158,10 +175,21 @@ Two notes before implementing it:
 - Several rules may match one request. The first matched rule that sets a header
   wins, and every matched `:substitute` rule applies. Preserve that ordering when
   compiling — it is the library's contract, not an accident.
+- **One host may need more than one credential.** `api.anthropic.com` can carry
+  both a subscription token and an API key, because an org can refuse the OAuth
+  token mid-conversation and `Claude.fall_back_to_api_key/2` swaps to the key
+  on a box that is already running. So `credentials` is a list keyed by nothing
+  — do not collapse it to a map on `host`, and mint the broker session with
+  every placeholder a run might need rather than only the one provisioning
+  chose. See settled question 2.
 
 ---
 
-## Open questions
+## Settled questions
+
+All four were open; all four are settled as of 2026-09-03. Each records what
+would reopen it, because a decision without a revisit condition is just a
+habit.
 
 1. ~~**Is provisioning the tenth library?**~~ **Settled 2026-09-03: no.** M0
    writes its own provisioning. The two-consumers signal misfires because the
@@ -198,11 +226,43 @@ Two notes before implementing it:
 
    M0 pins `{:managoat_runtimes, "~> 0.3"}`. Anything resolving to 0.2.x gets
    a library without the dispatchers.
-2. **Claude subscription auth versus an API key**, on a box someone else
-   operates. The API key path is unambiguous and is what `managoat_runtimes`
-   already does. Subscription auth is what most people are actually on, and it
-   needs a terms-of-service read before it goes near a design.
-3. **Server, CLI, or both.** M0 needs neither. M2's record wants a page. Decide
-   when the record forces it, not before.
-4. **Whether a box is per-job or per-project.** M0 and M1 do not need the
-   answer; M3's policy templates might.
+2. ~~**Claude subscription auth versus an API key.**~~ **Settled 2026-09-03:
+   support both.** Cheaper than it looks, because the library already does it:
+   `Claude.default_env/2` prefers `CLAUDE_CODE_OAUTH_TOKEN` when present and
+   falls back to `ANTHROPIC_API_KEY`, deliberately never exporting both,
+   because mixing them picks the wrong one depending on CLI version. Both are
+   bearer-shaped on the wire, so both broker identically through a
+   `:substitute` rule — the containment claim does not weaken.
+
+   Two consequences to design around rather than discover:
+
+   - `Claude.fall_back_to_api_key/2` exists because an org can refuse an OAuth
+     token **mid-conversation**, after provisioning has already chosen. For
+     Airlock that means a policy may need to carry *two* credentials for
+     `api.anthropic.com`, and the broker session must hold both placeholders
+     from the start — a session minted with only the OAuth rule cannot serve
+     the fallback. Design the schema for it even if M0 only exercises one.
+   - The terms-of-service question the original entry raised is about **a box
+     someone else operates**. Through M2 the box is the user's own machine, so
+     it does not bite. Do the read before M3, not before M0.
+
+3. ~~**Server, CLI, or both.**~~ **Settled 2026-09-03: an escript CLI, and the
+   record is an exported HTML file.** The plan's own line — the record is a
+   page, not necessarily a server — decides it. The product claim is that you
+   can hand someone the record, and a file is handable in a way a localhost
+   route is not. goatherd proves the escript shape works on this substrate.
+
+   **Revisit when** something needs the record to be *live* rather than final —
+   watching a long run, or the M4 notification when a session blocks on a
+   permission request. That is a real trigger, not a maybe; it just is not yet.
+
+4. ~~**Whether a box is per-job or per-project.**~~ **Settled 2026-09-03:
+   per-job, destroyed after the run.** It is the containment story, and it is
+   what makes the record honest: a run's diff is relative to a known starting
+   state rather than to whatever the last run left behind. The cost is full
+   provisioning per run, which `CLAUDE.md` says explicitly does not matter —
+   Airlock is optimised to be safe to leave, not to start fast.
+
+   **Revisit when** M3's policy templates want a warm box for a repeat job, at
+   which point the honest answer is a `lifetime:` key in the policy rather than
+   a silent change of default.
