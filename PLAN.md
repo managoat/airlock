@@ -196,11 +196,8 @@ Two notes before implementing it:
    dispatchers.** The trap still applies to any *other* optional-callback
    dispatch Airlock writes; see `CLAUDE.md`.
 
-   One catch for M0's `mix.exs`: **0.3.0 is on `main` but not published to
-   hex** — hex's latest stable is still 0.2.1. Until it is published, reaching
-   the dispatchers means a git dependency. Not blocking, because no code
-   exists yet, but decide it deliberately rather than pinning `~> 0.2` and
-   quietly getting a library without them.
+   M0 pins `{:managoat_runtimes, "~> 0.3"}`. Anything resolving to 0.2.x gets
+   a library without the dispatchers.
 2. **Claude subscription auth versus an API key**, on a box someone else
    operates. The API key path is unambiguous and is what `managoat_runtimes`
    already does. Subscription auth is what most people are actually on, and it
