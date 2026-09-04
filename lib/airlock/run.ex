@@ -37,6 +37,25 @@ defmodule Airlock.Run do
   `Managoat.Runtimes.ACP.install/3`'s own moduledoc says so again from the
   other side.
 
+  ## Provisioning does not go through the broker
+
+  The box gets the proxy environment for the **turn**, not for
+  provisioning. Two reasons, and the first is decisive:
+
+    * `npm install -g` for the ACP adapter would otherwise go through the
+      proxy, and a `deny` session refuses `registry.npmjs.org` unless the
+      policy names it. That would make every policy carry Airlock's own
+      implementation details — a user's allow list would have to include
+      the npm registry to run an agent that never touches npm;
+    * the box is not sealed yet, so nothing is being contained during
+      provisioning and routing it through a chokepoint records Airlock's
+      own installs rather than the agent's work.
+
+  The consequence to be honest about: **provisioning egress is not in the
+  record.** The record covers the sealed box, which is the agent's whole
+  life. What provisioning fetched is `PLAN.md`'s step 4 by design — "still
+  unsealed. Packages, skills and npm all reach the network here".
+
   ## The permission policy is set, never defaulted
 
   `Managoat.ACP.Permissions.verdict_for/2` falls back to **`auto_allow`**
@@ -159,16 +178,17 @@ defmodule Airlock.Run do
     agent = Keyword.get(opts, :agent, %{}) |> Map.put(:runtime, runtime)
     on_stage = Keyword.get(opts, :on_stage, fn _stage, _status -> :ok end)
 
-    # The proxy address the box is told is the one it can reach, which is
-    # not the one the listener bound to as soon as the box is not local.
-    box_env = broker |> Broker.box_env() |> Map.merge(proxy_env(broker, broker_host))
+    # Two environments, deliberately. Provisioning gets the placeholders
+    # and the runtime's own variables but **not** the proxy; the turn gets
+    # the proxy as well. See the moduledoc.
+    proxy = proxy_env(broker, broker_host)
 
     with {:ok, runtime_mod} <- Runtimes.for_runtime(runtime),
-         env = Runtime.env(runtime_mod, agent, box_env, broker.placeholders),
+         provision_env = Runtime.env(runtime_mod, agent, %{}, broker.placeholders),
          {:ok, box} <-
            Box.provision(
              provider: provider,
-             env: env,
+             env: provision_env,
              packages: Keyword.get(opts, :packages, %{}),
              on_stage: on_stage
            ) do
@@ -179,8 +199,10 @@ defmodule Airlock.Run do
           policy: policy,
           prompt: prompt,
           runtime: runtime,
+          runtime_mod: runtime_mod,
           agent: agent,
-          env: env,
+          provision_env: provision_env,
+          proxy: proxy,
           opts: opts
         })
 
@@ -200,11 +222,14 @@ defmodule Airlock.Run do
   defp after_provision(box, ctx) do
     on_stage = Keyword.get(ctx.opts, :on_stage, fn _stage, _status -> :ok end)
 
-    install = fn -> Runtime.install(box, ctx.runtime, ctx.agent, ctx.env) end
+    trust = fn -> Box.trust_ca(box, Broker.ca_pem(ctx.broker), ctx.provision_env) end
+    install = fn -> Runtime.install(box, ctx.runtime, ctx.agent, ctx.provision_env) end
 
-    with :ok <- stage(on_stage, "runtime", install),
+    with {:ok, ca_env} <- stage(on_stage, "trust", trust),
+         :ok <- stage(on_stage, "runtime", install),
          {:ok, box} <- seal(box, ctx.policy, ctx.broker_host, on_stage, ctx.opts),
-         {:ok, transcript} <- turn(box, ctx.runtime, ctx.env, ctx.prompt, ctx.agent, ctx.opts) do
+         turn_env = turn_env(ctx, ca_env),
+         {:ok, transcript} <- turn(box, ctx.runtime, turn_env, ctx.prompt, ctx.agent, ctx.opts) do
       {:ok,
        %{
          run: ctx.broker.run,
@@ -215,6 +240,19 @@ defmodule Airlock.Run do
        }}
     end
   end
+
+  # What the agent runs with: the proxy, the trust store the broker's own
+  # certificates need, the placeholders, and the runtime's credentials
+  # last so nothing shadows them.
+  defp turn_env(ctx, ca_env) do
+    base = ctx.proxy |> Map.merge(ca_env) |> Map.merge(no_proxy())
+    Runtime.env(ctx.runtime_mod, ctx.agent, base, ctx.broker.placeholders)
+  end
+
+  # A runtime talking to something on its own box does not go out through
+  # the proxy.
+  defp no_proxy,
+    do: %{"NO_PROXY" => "localhost,127.0.0.1,::1", "no_proxy" => "localhost,127.0.0.1,::1"}
 
   # The last thing before the agent runs, and fatal by default. See the
   # moduledoc.
@@ -436,6 +474,10 @@ defmodule Airlock.Run do
       :ok ->
         on_stage.(name, :done)
         :ok
+
+      {:ok, value} ->
+        on_stage.(name, :done)
+        {:ok, value}
 
       {:error, reason} ->
         on_stage.(name, {:failed, reason})

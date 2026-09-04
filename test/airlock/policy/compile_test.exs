@@ -51,7 +51,7 @@ defmodule Airlock.Policy.CompileTest do
       # HTTPS_PROXY (sudo, npm 9) egresses to an allowed host unbrokered
       # and therefore unrecorded, and the record would show nothing while
       # nothing failed. With one destination the chokepoint is structural.
-      assert %NetworkPolicy{allow: ["127.0.0.1:14322"]} =
+      assert %NetworkPolicy{allow: ["127.0.0.1"]} =
                Compile.network_policy(policy, "127.0.0.1:14322")
     end
 
@@ -69,6 +69,26 @@ defmodule Airlock.Policy.CompileTest do
 
       assert %NetworkPolicy{allow: ["broker.local"]} =
                Compile.network_policy(policy, "broker.local")
+    end
+  end
+
+  describe "the port is stripped from the egress policy" do
+    test "because NetworkPolicy's allow is domains, not authorities", %{policy: policy} do
+      # A `host:port` in that list matches nothing, so the box is sealed
+      # away from the one destination it is meant to have — and it fails
+      # silently: the seal reports :ok and the agent then cannot connect to
+      # anything. The first real Sprites run died here.
+      assert %NetworkPolicy{allow: ["4.tcp.ngrok.io"]} =
+               Compile.network_policy(policy, "4.tcp.ngrok.io:12171")
+    end
+
+    test "a bare host is unchanged", %{policy: policy} do
+      assert %NetworkPolicy{allow: ["broker.example"]} =
+               Compile.network_policy(policy, "broker.example")
+    end
+
+    test "a bracketed IPv6 literal keeps its brackets and loses its port", %{policy: policy} do
+      assert %NetworkPolicy{allow: ["[::1]"]} = Compile.network_policy(policy, "[::1]:14322")
     end
   end
 

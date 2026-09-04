@@ -205,6 +205,11 @@ defmodule Airlock.Render do
   def run_error({:unknown_runtime, runtime, supported}, _path),
     do: "airlock: no such runtime #{inspect(runtime)}. One of: #{Enum.join(supported, ", ")}."
 
+  def run_error({:bad_permissions, verdict, allowed}, _path),
+    do:
+      "airlock: no such permission verdict #{inspect(verdict)}. " <>
+        "One of: #{Enum.join(allowed, ", ")}."
+
   def run_error({:bad_provider, provider, allowed}, _path),
     do: "airlock: no such provider #{inspect(provider)}. One of: #{Enum.join(allowed, ", ")}."
 
@@ -320,6 +325,7 @@ defmodule Airlock.Render do
         "for the proxy to attach it to. Add the host to `allow`, or drop the credential."
 
   def error({:bad_provider, _provider, _allowed} = reason, path), do: run_error(reason, path)
+  def error({:bad_permissions, _verdict, _allowed} = reason, path), do: run_error(reason, path)
   def error({:bad_flags, _flags} = reason, path), do: run_error(reason, path)
   def error({:unexpected_args, _args} = reason, path), do: run_error(reason, path)
 

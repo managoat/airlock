@@ -28,6 +28,24 @@ defmodule Airlock.Box do
   the box has been provisioned — because a seal that silently did nothing
   is the failure this product cannot survive.
 
+  ## The box has to trust the broker
+
+  The broker terminates TLS on both ends of a `CONNECT` — that is how it
+  reads a placeholder out of a header and writes a credential in — so from
+  the box's point of view every HTTPS origin presents a certificate signed
+  by the broker's own root. A box that does not trust that root cannot
+  complete a handshake with anything:
+
+      broker: sandbox TLS handshake for registry.npmjs.org failed: :closed
+
+  which is what the first real run against Sprites did, at the npm install.
+  `trust_ca/2` writes the root into the box's system store and returns the
+  environment for the tools that keep their own — Node, curl, git, Python
+  all look somewhere different, and `claude-agent-acp` is Node.
+
+  This is not a credential and does not need protecting: it is a public
+  certificate, and the private key never leaves this machine.
+
   ## What the seal permits
 
   `Airlock.Policy.Compile.network_policy/2`: the broker's host, and nothing
@@ -67,6 +85,18 @@ defmodule Airlock.Box do
 
   @type stage :: (String.t(), :started | :done | {:failed, term()} -> any())
 
+  # Where the broker's root lands, and what `update-ca-certificates`
+  # rebuilds once it is there.
+  @staged_ca "/home/sprite/.airlock/broker-ca.pem"
+  @ca_path "/usr/local/share/ca-certificates/airlock-broker.crt"
+
+  # The OS trust bundle: the real roots *plus* the broker CA. Replacement-
+  # style CA variables point here and never at the broker CA alone — that
+  # is one certificate, and a tool told to trust only it rejects every
+  # non-brokered host it also has to reach. Only `NODE_EXTRA_CA_CERTS` is
+  # additive, so only it takes the broker CA on its own.
+  @system_ca_bundle "/etc/ssl/certs/ca-certificates.crt"
+
   @doc """
   Create a box and install what needs the network, **unsealed**.
 
@@ -97,6 +127,72 @@ defmodule Airlock.Box do
       {:ok, box}
     end
   end
+
+  @doc """
+  Install the broker's root certificate so the box can complete a TLS
+  handshake through it, and return the environment variables the tools that
+  keep their own trust store need.
+
+  Not best effort. `update-ca-certificates` is what rebuilds
+  `#{@system_ca_bundle}` to include the broker's root, and the replacement-
+  style variables below point at that bundle — so a system install that
+  quietly failed would leave every one of them naming a bundle the broker
+  is not in, and the failure would surface twenty seconds later as a
+  handshake error against a host nobody suspects.
+  """
+  @spec trust_ca(t(), String.t(), [{String.t(), String.t()}]) ::
+          {:ok, %{optional(String.t()) => String.t()}} | {:error, term()}
+  def trust_ca(%__MODULE__{} = box, ca_pem, env \\ []) do
+    case Sandbox.write_file(box.handle, @staged_ca, ca_pem, []) do
+      :ok -> install_ca(box, env)
+      {:error, reason} -> {:error, {:trust_ca, reason}}
+    end
+  end
+
+  defp install_ca(box, env) do
+    case exec(box, "bash", ["-lc", install_ca_script()], env: env, timeout: 120_000) do
+      {:ok, _out, 0} -> {:ok, ca_env()}
+      {:ok, out, code} -> {:error, {:trust_ca, {:exit, code, tail(out)}}}
+      {:error, reason} -> {:error, {:trust_ca, reason}}
+    end
+  end
+
+  @doc """
+  Where each toolchain looks for a trust store.
+
+  Several variables because the ecosystems disagree, and the split matters:
+
+    * `NODE_EXTRA_CA_CERTS` is **additive**, so it takes the broker's root
+      alone. It is also the one that matters most — every ACP adapter but
+      gemini's is a Node program, and Node ignores the OS store entirely;
+    * everything else **replaces** the bundle, so each points at the system
+      bundle that `update-ca-certificates` rebuilt to include the broker's
+      root. Pointed at the broker's root alone, a brokered `pip install` or
+      `cargo fetch` fails with `UnknownIssuer` against every host the
+      broker is not in front of;
+    * `UV_NATIVE_TLS` turns uv off its bundled webpki roots and onto that
+      same OS store.
+  """
+  @spec ca_env() :: %{optional(String.t()) => String.t()}
+  def ca_env do
+    %{
+      "NODE_EXTRA_CA_CERTS" => @ca_path,
+      "SSL_CERT_FILE" => @system_ca_bundle,
+      "REQUESTS_CA_BUNDLE" => @system_ca_bundle,
+      "CARGO_HTTP_CAINFO" => @system_ca_bundle,
+      "GIT_SSL_CAINFO" => @system_ca_bundle,
+      "CURL_CA_BUNDLE" => @system_ca_bundle,
+      "UV_NATIVE_TLS" => "1"
+    }
+  end
+
+  @doc "Where the broker's root certificate lands in the box's trust store."
+  @spec ca_path() :: String.t()
+  def ca_path, do: @ca_path
+
+  @doc "The OS bundle `update-ca-certificates` rebuilds, broker root included."
+  @spec system_ca_bundle() :: String.t()
+  def system_ca_bundle, do: @system_ca_bundle
 
   @doc """
   Seal the box: apply the policy's egress list, which names the broker and
@@ -176,6 +272,16 @@ defmodule Airlock.Box do
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
+  end
+
+  defp install_ca_script do
+    """
+    set -e
+    sudo mkdir -p #{Path.dirname(@ca_path)}
+    sudo cp #{@staged_ca} #{@ca_path}
+    sudo update-ca-certificates
+    test -f #{@system_ca_bundle}
+    """
   end
 
   defp stage(on_stage, name, fun) do

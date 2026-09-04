@@ -28,25 +28,25 @@ itself, and that one is interchangeable by design.
 
 ## Status
 
-**M0 is built, and has never run against a real box.** As of 2026-09-03
-this repository holds this brief, `PLAN.md`, `NOTES-M0.md` and an Elixir
-project implementing all nine of M0's steps: the policy parsed, validated
-and compiled onto both layers; the broker with a per-run session and CA;
-the box provisioned, the runtime brought up on placeholders, the box
-**sealed**, one turn driven over ACP, the record printed, the box
-destroyed.
+**M0 is done.** As of 2026-09-03 a real Claude agent has run on a real
+sealed Sprites box, holding a placeholder where the subscription token
+would be, with every request it made in the record — `injected`,
+`passthrough` and `denied` rows, each naming the rule that decided it. The
+box was destroyed after. `NOTES-M0.md` §9 has the record and the three bugs
+the first real runs found.
 
-What is **not** verified is a run: there are no Sprites credentials on this
-machine, so the pipeline is tested against `Managoat.Sandbox.Fake`,
-`Managoat.ACP.Testing.ScriptedAgent` and a real broker with a real origin.
-The seal is genuinely applied and read back; no agent has ever run.
+The box is **Sprites over a tunnel**, not the local runner: `PLAN.md` chose
+the runner as the cheapest path to a reachable broker and it turned out to
+be the expensive one — no public daemon, and `Runner.Adapter` refuses
+`apply_network_policy/2`, so it can never be sealed. `--provider runner`
+still works and still refuses to run without `--unsealed`.
 
-**Read `NOTES-M0.md` before planning further work.** It records two
-blockers that reordered M0 — the local box cannot be sealed, and there is
-no public runner daemon — the decision taken about them (the box is
-Sprites over a tunnel, not the local runner), and eight findings that
-corrected this file. A sibling product, goatherd, shares the substrate and
-has two findings worth carrying over; see the next section.
+**Not built:** M1's persistent store and reattach, M2's record-as-a-file
+(the record is a terminal table today), M3's other providers, M4.
+
+**Read `NOTES-M0.md` before planning further work.** A sibling product,
+goatherd, shares the substrate and has two findings worth carrying over;
+see the next section.
 
 Carry this rule over from Fountain, it is load-bearing: **never describe
 unbuilt behaviour as existing.** If a document, docstring or README describes
@@ -360,6 +360,18 @@ in goatherd. They are not hypothetical.
 - A **runner** sandbox name must be `runner-<32 hex>-<8 hex>`, and which
   runner a new box lands on is deliberately the host's decision. Mint the
   name per provider or `create` fails with `:not_a_runner_sandbox_name`.
+- **The box must trust the broker's CA, and nothing does it for you.** The
+  broker terminates TLS on both ends of a `CONNECT`, so every origin
+  presents its root; a box that does not trust it cannot handshake with
+  anything. `NODE_EXTRA_CA_CERTS` is additive and takes the broker root
+  alone — every other CA variable *replaces* the bundle and must name
+  `/etc/ssl/certs/ca-certificates.crt`, the one `update-ca-certificates`
+  rebuilt with the root in it. Point them at the root alone and every
+  non-brokered host fails with `UnknownIssuer`.
+- **`NetworkPolicy`'s `allow` is domains, not authorities.** A `host:port`
+  in it matches nothing, so the box is sealed away from its only permitted
+  destination — and the seal still reports `:ok`, so it surfaces as an
+  agent that cannot reach anything, minutes later.
 - **Provider credentials are application environment, not the shell.**
   `Managoat.Sandbox.Config.get(Sprites, :token)` reads
   `:managoat_sandbox`'s config, which `config/runtime.exs` would fill in

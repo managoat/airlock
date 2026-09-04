@@ -98,14 +98,40 @@ defmodule Airlock.Policy.Compile do
   The box's egress policy: the broker's host, and nothing else.
 
   `broker_host` is the host the box addresses the broker by — a name it can
-  resolve or a literal address. Everything the policy allows is reached
-  *through* it; see the moduledoc for why the allow list is not repeated
-  here.
+  resolve or a literal address, with or without a port. Everything the
+  policy allows is reached *through* it; see the moduledoc for why the
+  allow list is not repeated here.
+
+  ## The port is stripped, and that is not cosmetic
+
+  `Managoat.Sandbox.NetworkPolicy`'s `allow` is a list of **domains**, not
+  of authorities. A `host:port` put in it matches nothing, so the box is
+  sealed away from the one destination it is supposed to have — and the
+  failure is silent in the worst way: provisioning succeeds, the seal
+  reports `:ok`, the agent comes up, and then every request it makes fails
+  to connect. The first real run against Sprites died exactly there, with
+  the agent reporting it could not reach its own API.
+
+  The proxy *URL* keeps the port, because that is an address to dial. Only
+  the egress policy drops it. Fountain seals with
+  `URI.parse(proxy_url()).host` for the same reason.
   """
   @spec network_policy(Policy.t(), String.t()) :: NetworkPolicy.t()
   def network_policy(%Policy{}, broker_host) when is_binary(broker_host) do
-    %NetworkPolicy{allow: [broker_host]}
+    %NetworkPolicy{allow: [host_only(broker_host)]}
   end
+
+  # Not `Credential.host_part/1`: that keeps a port on a bracketed IPv6
+  # literal, because `[::1]:8443` is a rule pattern that deliberately pins
+  # one. An egress policy has no such notion, so this always drops it.
+  defp host_only("[" <> _ = authority) do
+    case String.split(authority, "]", parts: 2) do
+      [inside, _rest] -> inside <> "]"
+      _ -> authority
+    end
+  end
+
+  defp host_only(authority), do: authority |> String.split(":", parts: 2) |> hd()
 
   @doc """
   The proxy's rules: the policy's credentials with their references

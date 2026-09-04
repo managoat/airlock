@@ -14,7 +14,10 @@ defmodule Airlock.CLI do
       --broker-host <host:port>                the address the BOX reaches the broker by
     --broker-port <port>                     bind the broker here (default: ephemeral)
       --timeout <seconds>                      default 600
-      --unsealed                               proceed on a box that cannot be sealed
+      --permissions ask|auto_allow|auto_deny   default ask, which with nobody
+                                             to ask means every request is
+                                             denied and recorded
+    --unsealed                               proceed on a box that cannot be sealed
 
   ## `--broker-host` is required for a cloud box, and there is no default
 
@@ -124,10 +127,12 @@ defmodule Airlock.CLI do
     broker_host: :string,
     broker_port: :integer,
     timeout: :integer,
+    permissions: :string,
     unsealed: :boolean
   ]
 
   @providers ~w(sprites e2b daytona runner)
+  @verdicts ~w(ask auto_allow auto_deny)
 
   defp parse_flags(flags) do
     {parsed, rest, invalid} = OptionParser.parse(flags, strict: @flags)
@@ -141,23 +146,33 @@ defmodule Airlock.CLI do
 
   defp normalise_flags(parsed) do
     provider = Keyword.get(parsed, :provider, "sprites")
+    verdict = Keyword.get(parsed, :permissions, "ask")
 
-    if provider in @providers do
-      {:ok,
-       [
-         runtime: Keyword.get(parsed, :runtime, "claude"),
-         provider: String.to_existing_atom(provider),
-         unsealed: Keyword.get(parsed, :unsealed, false),
-         timeout: Keyword.get(parsed, :timeout, 600) * 1000,
-         # A tunnel forwards to a port it was told about, so a run behind
-         # one needs the listener bound somewhere known rather than
-         # wherever the OS put it.
-         broker_port: Keyword.get(parsed, :broker_port, 0),
-         broker_host: Keyword.get(parsed, :broker_host)
-       ]}
-    else
-      {:error, {:bad_provider, provider, @providers}}
+    cond do
+      provider not in @providers ->
+        {:error, {:bad_provider, provider, @providers}}
+
+      verdict not in @verdicts ->
+        {:error, {:bad_permissions, verdict, @verdicts}}
+
+      true ->
+        {:ok, flags(parsed, provider, verdict)}
     end
+  end
+
+  defp flags(parsed, provider, verdict) do
+    [
+      runtime: Keyword.get(parsed, :runtime, "claude"),
+      provider: String.to_existing_atom(provider),
+      unsealed: Keyword.get(parsed, :unsealed, false),
+      timeout: Keyword.get(parsed, :timeout, 600) * 1000,
+      permission_policy: %{"default" => verdict},
+      # A tunnel forwards to a port it was told about, so a run behind one
+      # needs the listener bound somewhere known rather than wherever the
+      # OS put it.
+      broker_port: Keyword.get(parsed, :broker_port, 0),
+      broker_host: Keyword.get(parsed, :broker_host)
+    ]
   end
 
   defp warn(nil), do: :ok

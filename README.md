@@ -3,20 +3,17 @@
 Run a coding agent on a machine you chose, with credentials that machine never
 holds, and get a record of everything it did.
 
-> **Status: built, never run for real.** All of M0 is implemented: a policy
-> parsed and compiled onto both enforcement layers, a per-run broker and CA,
-> a box provisioned and **sealed**, a coding agent brought up holding
-> placeholders instead of your keys, one turn driven over ACP, the record
-> printed, the box destroyed.
+> **Status: M0 done.** A real Claude agent has run on a sealed cloud box
+> holding a placeholder where the API token should be, fetched a host the
+> policy allowed, been refused one it did not, and the box was destroyed
+> after. The table below is from that run, not a mock-up.
 >
-> No agent has actually run, because this machine has no Sprites
-> credentials. The containment path below — the proxy, the injection, the
-> denials — is real and tested end to end against a live origin. The agent
-> on the other side of it is not yet.
+> **Not built:** the record is a terminal table rather than the exportable
+> HTML file it will be (M2), sessions do not survive the client going away
+> (M1), and Sprites is the only cloud provider wired up (M3).
 >
 > The brief is [CLAUDE.md](CLAUDE.md), the plan is [PLAN.md](PLAN.md), and
-> [NOTES-M0.md](NOTES-M0.md) records what building it found — including why
-> the box is a cloud sandbox rather than your laptop.
+> [NOTES-M0.md](NOTES-M0.md) records what building it found.
 
 ## The idea
 
@@ -47,16 +44,15 @@ work. The agent sees placeholders where your keys should be. The real
 credentials are attached at a proxy that is the box's only way out, so a
 placeholder lifted off the disk is worth nothing anywhere else.
 
-Then you get the record — this is `airlock broker` with `curl` standing in
-for a box, reformatted:
+Then you get the record. This is a real run, reformatted — Claude on a
+sealed Sprites box, asked to fetch two URLs:
 
 | Method | Host | Path | Verdict | Rule |
 |---|---|---|---|---|
 | POST | api.anthropic.com | /v1/messages | injected | anthropic |
-| GET | registry.npmjs.org | /stripe | passthrough | allow:registry.npmjs.org |
-| POST | api.stripe.com | /v1/customers | injected | stripe |
-| GET | pastebin.com | /raw/x9f2 | **denied** | — |
-| GET | 169.254.169.254 | /latest/meta-data/ | **denied** | — |
+| POST | api.anthropic.com | /api/event_logging/v2/batch | injected | anthropic |
+| GET | example.com | / | passthrough | allow:example.com |
+| CONNECT | pastebin.com | pastebin.com:443 | **denied** | — |
 
 Those last two rows are the point. An agent holding your Stripe key tried to
 reach a paste site and the cloud instance metadata endpoint, and you have a line

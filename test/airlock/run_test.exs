@@ -87,11 +87,15 @@ defmodule Airlock.RunTest do
       # runs `npm install -g` — its own moduledoc names the exposure. So a
       # seal that drifted earlier would fail provisioning, and one that
       # drifted later would leave the box open while the agent worked.
+      #
+      # `trust` is before `runtime` for a different reason: without the
+      # broker's root the box cannot complete a TLS handshake through it at
+      # all, which is how the first real run against Sprites failed.
       # The turn fails: nothing on a fake box speaks ACP. Everything before
       # it is real, and the order is what is under test.
       assert {:error, _turn} = run(policy, stages: self())
 
-      assert stages() == ["create", "packages", "runtime", "seal", "turn", "destroy"]
+      assert stages() == ["create", "packages", "trust", "runtime", "seal", "turn", "destroy"]
     end
 
     test "the box is destroyed even when the turn fails", %{policy: policy} do
@@ -118,7 +122,9 @@ defmodule Airlock.RunTest do
       # at the end of the run and the Fake's state goes with it. That is
       # the claim worth pinning: the policy was in force *while the agent
       # worked*, not merely applied at some point.
-      assert_received {:policies, [%NetworkPolicy{allow: ["broker.example:14322"]}]}
+      #
+      # The port is gone: `allow` is domains, not authorities.
+      assert_received {:policies, [%NetworkPolicy{allow: ["broker.example"]}]}
     end
 
     test "a provider that cannot be sealed stops the run", %{policy: policy} do

@@ -7,9 +7,12 @@ turned up four things that change the plan, and several smaller ones that
 change the code. They are recorded here rather than folded silently into
 `PLAN.md`, because two of them are decisions rather than corrections.
 
-**Update, later the same day:** steps 4–9 are now built too, on the
-decision recorded in [§7](#7-what-was-decided-and-what-it-changed). Four
-more findings came out of that and are in [§8](#8-findings-from-steps-49).
+**Update, later the same day:** steps 4–9 are built, and **M0 ran** — a
+real Claude agent on a real sealed Sprites box, holding a placeholder,
+with all three verdicts in the record. The decision that got there is
+[§7](#7-what-was-decided-and-what-it-changed), the findings from building
+it are [§8](#8-findings-from-steps-49), and the three bugs the first real
+runs found are [§9](#9-what-three-real-runs-found).
 
 ## Contents
 
@@ -21,6 +24,7 @@ more findings came out of that and are in [§8](#8-findings-from-steps-49).
 6. [Decisions taken](#6-decisions-taken)
 7. [What was decided, and what it changed](#7-what-was-decided-and-what-it-changed)
 8. [Findings from steps 4–9](#8-findings-from-steps-49)
+9. [What three real runs found](#9-what-three-real-runs-found)
 
 ---
 
@@ -427,17 +431,94 @@ else". It becomes "the broker and the VPN's control plane", which is a
 wider allow list than `Airlock.Policy.Compile` argues for and needs that
 argument re-made rather than quietly widened.
 
-### Still not verified
+### Now verified
 
-No agent has run. There are no Sprites credentials on this machine — no
-`SPRITES_TOKEN`, no `~/.sprites/sprites.json`, no `sprites` CLI — so
-everything above is tested against `Managoat.Sandbox.Fake`,
-`Managoat.ACP.Testing.ScriptedAgent` and a real broker with a real origin.
-What that leaves unproven is the one thing M0 exists to answer: whether a
-real agent does real work with credentials it never holds.
+See [§9](#9-what-three-real-runs-found).
 
-To find out:
+---
 
-    export SPRITES_TOKEN=...            # or ANTHROPIC_API_KEY for the policy
-    ngrok tcp <the broker port>
-    airlock run policy.yaml "..." --broker-host 4.tcp.ngrok.io:19482
+## 9. What three real runs found
+
+`sprite login` and a working ngrok account closed the last gap on
+2026-09-03. Three runs against Sprites, each failing further along than the
+last, found three bugs — all of them the kind that only a real box shows.
+
+### The box has to trust the broker's CA, and nothing installed it
+
+    broker: sandbox TLS handshake for registry.npmjs.org failed: :closed
+
+The broker terminates TLS on both ends of a `CONNECT` — that is how it
+reads a placeholder out of a header — so every origin presents a
+certificate signed by the broker's own root, and a box that does not trust
+that root cannot complete a handshake with **anything**.
+
+`Airlock.Broker`'s moduledoc said "the root certificate the box has to
+trust is `ca_pem/1`. Installing it is provisioning's job (step 5), not this
+module's." That sentence was written and the step was not built — exactly
+the failure `CLAUDE.md`'s "never describe unbuilt behaviour as existing"
+rule is about, committed in the same session that quotes the rule.
+`Airlock.Box.trust_ca/3` is the step.
+
+### The replacement-style CA variables must name the system bundle
+
+The first fix set all of them to the broker's root. Wrong, and Fountain's
+`broker.ex` had the comment already: `NODE_EXTRA_CA_CERTS` is **additive**,
+so it takes the broker root alone; `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`,
+`CARGO_HTTP_CAINFO` and friends **replace** the bundle, so each must point
+at `/etc/ssl/certs/ca-certificates.crt` — the bundle
+`update-ca-certificates` rebuilt with the broker root in it. Pointed at one
+certificate, a brokered `pip install` or `cargo fetch` fails with
+`UnknownIssuer` against every host the broker is *not* in front of.
+
+Which also makes the system install load-bearing rather than best effort:
+if `update-ca-certificates` quietly fails, every one of those variables
+names a bundle the broker is not in.
+
+### `NetworkPolicy`'s `allow` is domains, not authorities
+
+The seal was given `4.tcp.ngrok.io:12171` — the same string as the proxy
+URL's authority. `Managoat.Sandbox.NetworkPolicy` documents `allow` as a
+list of **domains**, and a `host:port` in it matches nothing, so the box
+was sealed away from the one destination it was supposed to have.
+
+The failure mode is the worst available: provisioning succeeds, the seal
+reports `:ok`, the agent comes up, and only then does every request fail —
+the agent reported `Unable to connect to API` and had no way to know why.
+`Airlock.Policy.Compile.network_policy/2` strips the port and says why.
+Fountain seals with `URI.parse(proxy_url()).host` for the same reason.
+
+### Provisioning cannot go through the broker
+
+`npm install -g` for the ACP adapter went through the proxy, where a
+`deny` session refused `registry.npmjs.org` because the policy did not name
+it. Making that work would mean every policy carrying Airlock's own
+implementation details — a user's allow list would need the npm registry to
+run an agent that never touches npm.
+
+So the proxy environment is applied to the **turn**, not to provisioning.
+The box is not sealed during provisioning anyway, which is `PLAN.md` step
+4 by design. The consequence to be honest about: provisioning egress is not
+in the record. The record covers the sealed box, which is the agent's whole
+life.
+
+### The record, from the acceptance run
+
+Policy: `api.anthropic.com` with a `substitute` credential, `example.com`
+allowed with no rule, everything else denied. Prompt: fetch `example.com`,
+then fetch a pastebin URL.
+
+    VERDICT      METHOD  HOST                PATH                  RULE               STATUS
+    injected     POST    api.anthropic.com   /v1/messages          anthropic          200
+    passthrough  GET     example.com         /                     allow:example.com  200
+    denied       CONNECT pastebin.com        pastebin.com:443      —                  403
+
+Eighteen rows in all, one per request the agent made — including Claude
+Code's own telemetry, bootstrap and MCP registry calls, every one of them
+brokered. The agent fetched `example.com` and reported its title; the
+pastebin fetch came back to it as `Socket is closed`, with no way to tell
+why. The box held `PLACEHOLDER-AIRLOCK-ANTHROPIC` and was destroyed.
+
+That is M0's "done when", in one record: the agent completed a task
+requiring network access, the box never held a real credential, and the log
+shows an `injected` row, a `passthrough` row and a `denied` row, each
+naming the rule that decided it.
