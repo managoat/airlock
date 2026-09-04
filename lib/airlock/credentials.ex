@@ -40,6 +40,7 @@ defmodule Airlock.Credentials do
   """
 
   alias Airlock.Keychain
+  alias Managoat.Sandbox
 
   # The Sprites CLI's keychain service, and the file it records which
   # keyring item belongs to the selected org.
@@ -193,4 +194,41 @@ defmodule Airlock.Credentials do
   end
 
   defp keyring_key(_config), do: :error
+
+  @doc """
+  Is `provider` configured well enough to be talked to at all?
+
+  Every `managoat_sandbox` adapter reads its own application environment
+  and **raises** on a missing key, from inside the library and several
+  frames down — `Managoat.Sandbox.Sprites.Client.get!/0` and friends. In a
+  mix project `config/runtime.exs` fills that in; an escript never runs
+  it, which is `NOTES-M0.md` §8's purest example of the trap, and
+  `Airlock.Boot` is what lifts the variables across.
+
+  So every command that is about to touch a provider asks this first, and
+  gets back an error naming the variable rather than a stack trace.
+
+  The runner is not checked: it authenticates a daemon at
+  `Airlock.Box.Endpoint`, not a provider API, and the fakes authenticate
+  nothing.
+  """
+  @spec provider_ready(atom()) :: :ok | {:error, {:provider_not_configured, atom(), String.t()}}
+  def provider_ready(provider) do
+    case provider_credential(provider) do
+      :none -> :ok
+      {_key, value} when is_binary(value) and value != "" -> :ok
+      {key, _} -> {:error, {:provider_not_configured, provider, key}}
+    end
+  end
+
+  defp provider_credential(:sprites),
+    do: {"SPRITES_TOKEN", Sandbox.Config.get(Managoat.Sandbox.Sprites, :token)}
+
+  defp provider_credential(:e2b),
+    do: {"E2B_API_KEY", Sandbox.Config.get(Managoat.Sandbox.E2B, :api_key)}
+
+  defp provider_credential(:daytona),
+    do: {"DAYTONA_API_KEY", Sandbox.Config.get(Managoat.Sandbox.Daytona, :api_key)}
+
+  defp provider_credential(_provider), do: :none
 end

@@ -113,12 +113,20 @@ same containment on two different machines, and a run survives the client going
 away and coming back. The first half holds already; the second is the whole of
 what is left.
 
-Worth doing alongside, because it is the same concern and it is cheap: a
-killed CLI orphans its box. `Airlock.Run` destroys on both the happy and the
-error paths — verified across four real runs, three of them failures, with
-nothing left behind — but a `SIGINT` skips it, and an orphaned Sprites box
-costs money and holds a proxy address. An `airlock reap` over
-`Sandbox.list_all_names/1` filtering `airlock-*` is the cheap version.
+~~Worth doing alongside, because it is the same concern and it is cheap: a
+killed CLI orphans its box.~~ **Done, 2026-09-04, alongside M2.**
+`Airlock.Boxes` plus `airlock boxes` and `airlock reap --yes`.
+`Airlock.Run` destroys on both the happy and the error paths — verified
+across four real runs, three of them failures, with nothing left behind —
+but a `SIGINT` skips it, and an orphaned Sprites box costs money and holds
+a proxy address.
+
+Two things that were not in the sketch. The match is `airlock-<16 hex>`
+exactly and not the `airlock-*` prefix above, because `reap` destroys what
+it matches and a prefix would take `airlock-staging` with it. And `reap`
+refuses without `--yes`: from outside, a box someone is working on looks
+exactly like an orphan — the account view is names, and a status does not
+say whose.
 
 ---
 

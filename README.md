@@ -99,6 +99,10 @@ ngrok tcp 14322                               # a raw TCP tunnel, not an HTTP on
 The run prints a summary and writes `airlock-<run>.html` beside you. That
 file is the record: open it, or send it to someone who was not there.
 
+A run destroys its own box. If you kill the CLI before it gets there, the
+box survives — `airlock boxes` finds it and `airlock reap --yes` destroys
+it.
+
 The broker is a listener the box dials *out* to, so it needs an address on
 the box's network. An HTTP reverse proxy will not do — the proxy protocol
 is `CONNECT` — and a tunnel puts the session token on the public internet,

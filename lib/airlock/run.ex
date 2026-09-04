@@ -163,7 +163,11 @@ defmodule Airlock.Run do
          # check that must run before anything is created. Credentials are
          # about the shell, and the library would raise for them anyway.
          :ok <- Reachability.check(broker_host, provider),
-         :ok <- provider_ready(provider),
+         # Checked before anything is created, for the same reason
+         # reachability is: the adapter *raises* on a missing token, from
+         # inside the library, and by then a broker session has been minted
+         # and a telemetry handler attached.
+         :ok <- Credentials.provider_ready(provider),
          {:ok, _egress} <- Egress.start_link(run: broker.run) do
       on_stage.("broker", {:ready, broker_host})
 
@@ -498,31 +502,6 @@ defmodule Airlock.Run do
       "https_proxy" => url
     }
   end
-
-  # Checked before anything is created, for the same reason reachability
-  # is: `Managoat.Sandbox.Sprites.Client.get!/0` *raises* on a missing
-  # token, from inside the library, several frames down — and by then a
-  # broker session has been minted and a telemetry handler attached.
-  defp provider_ready(provider) do
-    case provider_credential(provider) do
-      :none -> :ok
-      {_key, value} when is_binary(value) and value != "" -> :ok
-      {key, _} -> {:error, {:provider_not_configured, provider, key}}
-    end
-  end
-
-  defp provider_credential(:sprites),
-    do: {"SPRITES_TOKEN", Sandbox.Config.get(Managoat.Sandbox.Sprites, :token)}
-
-  defp provider_credential(:e2b),
-    do: {"E2B_API_KEY", Sandbox.Config.get(Managoat.Sandbox.E2B, :api_key)}
-
-  defp provider_credential(:daytona),
-    do: {"DAYTONA_API_KEY", Sandbox.Config.get(Managoat.Sandbox.Daytona, :api_key)}
-
-  # The runner authenticates a daemon at the endpoint, not a provider API,
-  # and the fakes authenticate nothing.
-  defp provider_credential(_provider), do: :none
 
   # The environment wins: an explicitly exported value is a deliberate one,
   # and a found credential is a convenience.

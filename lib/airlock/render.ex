@@ -139,6 +139,61 @@ defmodule Airlock.Render do
     """
   end
 
+  @doc "Airlock's boxes on a provider account, and what to do about them."
+  @spec boxes([Airlock.Boxes.box()], atom()) :: String.t()
+  def boxes([], provider), do: "No Airlock boxes on the #{provider} account."
+
+  def boxes(boxes, provider) do
+    """
+    #{length(boxes)} Airlock box(es) on the #{provider} account:
+
+    #{Enum.map_join(boxes, "\n", &"  #{pad(&1.name, 28)} #{&1.status}")}
+
+    A run destroys its own box, so these outlived one — most likely a run
+    that was interrupted before its destroy step. `airlock reap --yes`
+    destroys them.
+    """
+  end
+
+  @doc """
+  What `reap` refuses to do without being told twice.
+
+  From out here a box someone is working on looks exactly like an orphan:
+  the account view is names, and a status does not say whose.
+  """
+  @spec reap_refused([Airlock.Boxes.box()], atom()) :: String.t()
+  def reap_refused(boxes, provider) do
+    boxes(boxes, provider) <>
+      "\nairlock: reap destroys boxes and will not do it unasked. " <>
+      "Pass --yes if these are yours to destroy."
+  end
+
+  @doc "What a reap did, one line per box."
+  @spec reaped([{:ok | :refused | {:error, term()}, String.t()}]) :: String.t()
+  def reaped(results) do
+    Enum.map_join(results, "\n", fn
+      {:ok, name} -> "  #{pad(name, 28)} destroyed"
+      {:refused, name} -> "  #{pad(name, 28)} left alone — not a name Airlock minted"
+      {{:error, reason}, name} -> "  #{pad(name, 28)} failed: #{inspect(reason)}"
+    end)
+  end
+
+  @doc "Why the account could not be read."
+  @spec boxes_error(term()) :: String.t()
+  def boxes_error(:truncated) do
+    """
+    airlock: the provider would not give a complete list of the account's
+    sandboxes, and returned :truncated rather than a partial one that looks
+    whole. Reaping against half an account is worse than not reaping, so
+    this stops here.
+    """
+  end
+
+  def boxes_error({:provider_not_configured, _provider, _var} = reason),
+    do: run_error(reason, "")
+
+  def boxes_error(reason), do: run_error(reason, "")
+
   @doc "Why a run stopped, in terms someone can act on."
   @spec run_error(term(), Path.t()) :: String.t()
   def run_error({:cannot_seal, provider}, _path) do

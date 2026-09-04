@@ -5,6 +5,8 @@ defmodule Airlock.CLI do
       airlock run <policy.yaml> <prompt>   run one job on a box and print the record
       airlock check <policy.yaml>          parse a policy and show what it compiles to
       airlock broker <policy.yaml>         start the broker and print the egress log
+      airlock boxes [--provider sprites]   Airlock's boxes on a provider account
+      airlock reap  [--provider sprites]   destroy them; needs --yes
       airlock version
 
   `run` options:
@@ -12,15 +14,15 @@ defmodule Airlock.CLI do
       --runtime claude|codex|gemini|opencode   default claude
       --provider sprites|e2b|daytona|runner    default sprites
       --broker-host <host:port>                the address the BOX reaches the broker by
-    --broker-port <port>                     bind the broker here (default: ephemeral)
+      --broker-port <port>                     bind the broker here (default: ephemeral)
       --timeout <seconds>                      default 600
       --permissions ask|auto_allow|auto_deny   default ask, which with nobody
-                                             to ask means every request is
-                                             denied and recorded
-    --unsealed                               proceed on a box that cannot be sealed
-    --record <path>                          where the record file lands
-                                             (default airlock-<run>.html)
-    --no-record                              print the record and write no file
+                                               to ask means every request is
+                                               denied and recorded
+      --unsealed                               proceed on a box that cannot be sealed
+      --record <path>                          where the record file lands
+                                               (default airlock-<run>.html)
+      --no-record                              print the record and write no file
 
   ## The record is a file
 
@@ -29,6 +31,15 @@ defmodule Airlock.CLI do
   decided them. That is the product claim — you can hand someone the record —
   and `Airlock.Record` is where it is written. The terminal summary is still
   printed, because a summary you have to open a browser for is not one.
+
+  ## A killed run leaves its box
+
+  `Airlock.Run` destroys the box on the happy path and on every error path,
+  but a `SIGINT` is neither: the process is gone before the destroy stage
+  runs. An orphaned box costs money and holds a live proxy address, so
+  `airlock boxes` says what is out there and `airlock reap --yes` destroys
+  it. Without `--yes`, `reap` lists and refuses — from out here a box
+  someone is working on looks exactly like an orphan.
 
   ## `--broker-host` is required for a cloud box, and there is no default
 
@@ -48,6 +59,7 @@ defmodule Airlock.CLI do
   clear.
   """
 
+  alias Airlock.Boxes
   alias Airlock.Broker
   alias Airlock.Broker.Reachability
   alias Airlock.Credentials
@@ -69,6 +81,8 @@ defmodule Airlock.CLI do
   defp dispatch(["run", path, prompt | flags]), do: run(path, prompt, flags)
   defp dispatch(["check", path]), do: check(path)
   defp dispatch(["broker", path]), do: broker(path)
+  defp dispatch(["boxes" | flags]), do: boxes(flags)
+  defp dispatch(["reap" | flags]), do: reap(flags)
   defp dispatch(["version"]), do: out(Airlock.version())
   defp dispatch([]), do: out(@moduledoc)
   defp dispatch(["help" | _]), do: out(@moduledoc)
@@ -260,6 +274,53 @@ defmodule Airlock.CLI do
 
     Process.sleep(400)
     follow(run, length(rows))
+  end
+
+  # ── boxes and reap ─────────────────────────────────────────────────────────
+
+  defp boxes(flags) do
+    with {:ok, provider, _yes} <- parse_box_flags(flags),
+         {:ok, boxes} <- Boxes.list(provider) do
+      out(Render.boxes(boxes, provider))
+    else
+      {:error, reason} -> die(Render.boxes_error(reason))
+    end
+  end
+
+  defp reap(flags) do
+    with {:ok, provider, yes} <- parse_box_flags(flags),
+         {:ok, boxes} <- Boxes.list(provider) do
+      names = Enum.map(boxes, & &1.name)
+
+      cond do
+        names == [] -> out(Render.boxes(boxes, provider))
+        yes -> out(Render.reaped(Boxes.reap(provider, names)))
+        true -> die(Render.reap_refused(boxes, provider))
+      end
+    else
+      {:error, reason} -> die(Render.boxes_error(reason))
+    end
+  end
+
+  @box_flags [provider: :string, yes: :boolean]
+
+  @doc """
+  Parse the flags `boxes` and `reap` take.
+
+  Public for the same reason `parse_flags/1` is: every error path in the
+  commands themselves ends at `die/1`, which halts the VM.
+  """
+  @spec parse_box_flags([String.t()]) :: {:ok, atom(), boolean()} | {:error, term()}
+  def parse_box_flags(flags) do
+    {parsed, rest, invalid} = OptionParser.parse(flags, strict: @box_flags)
+    provider = Keyword.get(parsed, :provider, "sprites")
+
+    cond do
+      invalid != [] -> {:error, {:bad_flags, Enum.map(invalid, &elem(&1, 0))}}
+      rest != [] -> {:error, {:unexpected_args, rest}}
+      provider not in @providers -> {:error, {:bad_provider, provider, @providers}}
+      true -> {:ok, String.to_existing_atom(provider), Keyword.get(parsed, :yes, false)}
+    end
   end
 
   # ── output ─────────────────────────────────────────────────────────────────
