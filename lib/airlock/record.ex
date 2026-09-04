@@ -30,7 +30,8 @@ defmodule Airlock.Record do
       rule it enforces is that this module never sees a vendor's format;
     * **Egress** — every request the proxy decided about, with the verdict
       and the rule that decided it. `Airlock.Egress.rows/1`;
-    * **Tools** — every tool call the agent made, paired with its result;
+    * **Tools** — every tool call the agent made, paired with its result,
+      how long it took, and what the turn cost in tokens;
     * **Changes** — the diff. *Not yet built*; it arrives with
       `Airlock.Changes` and the panel says so rather than being absent.
 
@@ -243,6 +244,7 @@ defmodule Airlock.Record do
   # would say the panel behind it holds that many rows, and it holds a
   # placeholder.
   defp badge("egress", result), do: count_badge(length(result.egress))
+  defp badge("tools", result), do: count_badge(length(Transcript.tool_calls(result.transcript)))
   defp badge(_id, _result), do: ""
 
   defp count_badge(0), do: ""
@@ -430,12 +432,91 @@ defmodule Airlock.Record do
 
   # ── tools ──────────────────────────────────────────────────────────────────
 
-  defp tools_panel(_result) do
-    not_built(
-      "Tools",
-      "Every tool call the agent made, paired with its result and what it cost.",
-      "M2 step 2"
-    )
+  defp tools_panel(%{transcript: transcript}) do
+    calls = Transcript.tool_calls(transcript)
+    usage_block(transcript.usage) <> tool_table(calls, transcript) <> permissions(transcript)
+  end
+
+  defp tool_table([], _transcript) do
+    ~s(<div class="unbuilt"><p>The agent ran no tools.</p></div>)
+  end
+
+  defp tool_table(calls, transcript) do
+    """
+    <p class="note">Every tool call the agent made, in order, threaded to its result on the id
+    ACP gives it. <em>Since</em> is milliseconds from the first line of the turn, and
+    <em>took</em> is to the call's terminal update — wall clock on this machine, which is
+    where the only clock in the exchange is: a <code>session/update</code> carries no time
+    of its own.</p>
+    <div class="scroll"><table class="egress">
+      <thead><tr>
+        <th>Status</th><th>Tool</th><th class="num">Since</th><th class="num">Took</th>
+      </tr></thead>
+      <tbody>#{Enum.map_join(calls, "\n", &tool_row/1)}</tbody>
+    </table></div>
+    #{thinking_note(transcript)}
+    """
+  end
+
+  defp tool_row(call) do
+    """
+    <tr class="v-#{tool_class(call.status)}">
+      <td><span class="verdict #{tool_class(call.status)}">#{call.status}</span></td>
+      <td>
+        <div class="tool-head">
+          <span class="tool-name">#{escape(call.name)}</span>
+          <span class="tool-summary">#{escape(call.summary)}</span>
+        </div>
+        #{pre_details("Input", call.input)}#{pre_details("Output", call.output)}
+      </td>
+      <td class="num">#{escape(millis(call.at_ms))}</td>
+      <td class="num">#{escape(millis(call.duration_ms))}</td>
+    </tr>
+    """
+  end
+
+  defp tool_class(:ok), do: "passthrough"
+  defp tool_class(:failed), do: "denied"
+  defp tool_class(:open), do: "malformed"
+
+  # `Managoat.ACP.Usage` normalises what four runtimes each report
+  # somewhere different — gemini does not use the protocol's field at all.
+  # A turn that reported none is a turn without a usage, not a zero one,
+  # and this says which.
+  defp usage_block(nil) do
+    ~s|<p class="note">The runtime reported no token usage for this turn. That is a turn | <>
+      ~s|without a figure, not a turn that cost nothing.</p>|
+  end
+
+  defp usage_block(usage) do
+    cells =
+      Enum.map_join(Enum.sort(usage), "", fn {key, value} ->
+        ~s(<div><dt>#{escape(key)}</dt><dd>#{escape(value)}</dd></div>)
+      end)
+
+    ~s(<dl class="meta usage">#{cells}</dl>)
+  end
+
+  defp thinking_note(transcript) do
+    case Transcript.of_kind(transcript, :thinking) do
+      [] -> ""
+      blocks -> ~s|<p class="note">#{length(blocks)} thinking block(s) are in the Transcript.</p>|
+    end
+  end
+
+  defp permissions(transcript) do
+    case Transcript.of_kind(transcript, :permission_request) do
+      [] ->
+        ""
+
+      requests ->
+        rows = Enum.map_join(requests, "\n", &block(&1, %{}))
+
+        ~s|<h3>Permission requests (#{length(requests)})</h3>| <>
+          ~s|<p class="note">The agent asked, and with nobody attached to answer, | <>
+          ~s|Airlock denied. <code>--permissions auto_allow</code> is the other choice, | <>
+          ~s|and the caller owns it.</p>| <> rows
+    end
   end
 
   # ── changes ────────────────────────────────────────────────────────────────
@@ -477,23 +558,6 @@ defmodule Airlock.Record do
   end
 
   # ── parts ──────────────────────────────────────────────────────────────────
-
-  @doc """
-  The tool calls in a transcript, each paired with its result.
-
-  Public because the Tools tab and the terminal summary both want it and
-  neither should re-derive the pairing: `Managoat.ACP.Blocks` threads a
-  call and its result on `toolCallId` by construction, and this is where
-  that thread is followed.
-  """
-  @spec tool_calls(Transcript.t()) :: [map()]
-  def tool_calls(%Transcript{} = transcript) do
-    results = tool_results(transcript)
-
-    transcript
-    |> Transcript.of_kind(:tool_use)
-    |> Enum.map(&Map.put(&1, :result, Map.get(results, &1[:id])))
-  end
 
   defp tool_results(%Transcript{} = transcript) do
     transcript
@@ -545,6 +609,7 @@ defmodule Airlock.Record do
   defp usage(usage), do: Enum.map_join(usage, ", ", fn {key, value} -> "#{key} #{value}" end)
 
   defp millis(nil), do: "—"
+  defp millis(ms) when is_integer(ms), do: "#{ms}ms"
   defp millis(ms), do: "#{Float.round(ms, 1)}ms"
 
   @doc """
@@ -669,6 +734,7 @@ defmodule Airlock.Record do
     .verdict.passthrough { color: var(--ok); }
     .verdict.denied { color: var(--bad); }
     .verdict.malformed { color: var(--warn); }
+    dl.usage { margin: 0 0 1.25rem; }
     tr.v-denied { background: color-mix(in srgb, var(--bad) 7%, transparent); }
     .scheme, .from, .err { font-size: .74rem; color: var(--dim); }
     .err { color: var(--bad); }

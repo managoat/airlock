@@ -21,6 +21,31 @@ defmodule Airlock.Transcript do
   token usage from `Managoat.ACP.Usage`. A plain struct — the run's
   durable state is the sandbox's (goatherd's finding 1), so this is an
   accumulator, not storage.
+
+  ## Every block is stamped with when it arrived
+
+  `Managoat.ACP.Blocks` carries no time, because a block is a translation
+  of a message and a message does not know when it was read. The process
+  that read it does, and that is the only place the information exists: an
+  adapter's `session/update` has no timestamp in it.
+
+  So `add_line/2` stamps each block with `at_ms`, milliseconds since
+  `new/0`. That is what makes `tool_calls/1` able to say how long a tool
+  call took, which is the whole of the record's Tools tab.
+
+  ### Why not `Managoat.ACP.Tracer`
+
+  `PLAN.md`'s Tools tab says "spans from `Managoat.ACP.Tracer`". Tracer
+  emits **OpenTelemetry** spans, and its own moduledoc says "with no SDK
+  started every span call is a no-op". Airlock depends on
+  `opentelemetry_api` — through `managoat_acp`, transitively — and on no
+  SDK, so wiring Tracer in would collect nothing at all and the Tools tab
+  would be permanently, invisibly empty. Adding an SDK and an in-memory
+  exporter to an escript to read back spans it just wrote is a long way
+  round to data this module already holds in order.
+
+  Tracer is not wrong and is not replaced: it is for a host with
+  dashboards, and Airlock is a file. `NOTES-M2.md` has the finding.
   """
 
   alias Managoat.ACP.Blocks
@@ -30,14 +55,39 @@ defmodule Airlock.Transcript do
           session_id: String.t() | nil,
           stop_reason: String.t() | nil,
           usage: map() | nil,
-          stderr: String.t()
+          stderr: String.t(),
+          started_at: integer()
         }
 
-  defstruct blocks: [], session_id: nil, stop_reason: nil, usage: nil, stderr: ""
+  @typedoc """
+  One tool call, threaded to its result on `toolCallId` — which ACP does by
+  construction, so this follows a thread rather than guessing at a pairing.
 
-  @doc "An empty transcript."
+  `status` is `:open` when no terminal update ever arrived: the turn ended
+  or the adapter died with the call in flight. That is a different thing
+  from a failure and the record says so.
+  """
+  @type tool_call :: %{
+          id: String.t() | nil,
+          name: String.t(),
+          summary: String.t(),
+          input: String.t() | nil,
+          output: String.t() | nil,
+          status: :ok | :failed | :open,
+          at_ms: non_neg_integer(),
+          duration_ms: non_neg_integer() | nil
+        }
+
+  defstruct blocks: [],
+            session_id: nil,
+            stop_reason: nil,
+            usage: nil,
+            stderr: "",
+            started_at: 0
+
+  @doc "An empty transcript, and the clock every block's `at_ms` is against."
   @spec new() :: t()
-  def new, do: %__MODULE__{}
+  def new, do: %__MODULE__{started_at: System.monotonic_time(:millisecond)}
 
   @doc """
   Add the blocks one line of agent output parses into.
@@ -49,8 +99,12 @@ defmodule Airlock.Transcript do
   @spec add_line(t(), String.t()) :: t()
   def add_line(%__MODULE__{} = transcript, line) do
     case Blocks.from_line(line) do
-      [] -> transcript
-      blocks -> %{transcript | blocks: transcript.blocks ++ blocks}
+      [] ->
+        transcript
+
+      blocks ->
+        at_ms = System.monotonic_time(:millisecond) - transcript.started_at
+        %{transcript | blocks: transcript.blocks ++ Enum.map(blocks, &Map.put(&1, :at_ms, at_ms))}
     end
   end
 
@@ -77,6 +131,47 @@ defmodule Airlock.Transcript do
     kept = transcript.stderr <> data
     %{transcript | stderr: String.slice(kept, -limit..-1//1)}
   end
+
+  @doc """
+  Every tool call the agent made, threaded to its result.
+
+  The Tools tab, and the answer to "what did it actually do" that a
+  transcript alone does not give: a turn's text says what the agent
+  reported, and this says what it ran.
+
+  A `:tool_result` with no `:tool_use` before it is dropped rather than
+  shown as an orphan — it means the call arrived before this transcript
+  started, which is what reattach (M1) will look like.
+  """
+  @spec tool_calls(t()) :: [tool_call()]
+  def tool_calls(%__MODULE__{} = transcript) do
+    results = transcript |> of_kind(:tool_result) |> Map.new(&{&1[:tool_id], &1})
+
+    transcript
+    |> of_kind(:tool_use)
+    |> Enum.map(&pair(&1, Map.get(results, &1[:id])))
+  end
+
+  defp pair(use, result) do
+    at_ms = Map.get(use, :at_ms, 0)
+
+    %{
+      id: use[:id],
+      name: use[:name] || "tool",
+      summary: use[:summary] || "",
+      input: use[:body],
+      output: result && result[:body],
+      status: status(result),
+      at_ms: at_ms,
+      duration_ms: result && max(Map.get(result, :at_ms, at_ms) - at_ms, 0)
+    }
+  end
+
+  # Not `:failed` — a call with no terminal update never reported an
+  # outcome at all, and calling that a failure invents one.
+  defp status(nil), do: :open
+  defp status(%{error?: true}), do: :failed
+  defp status(_result), do: :ok
 
   @doc "The blocks of one kind, in order."
   @spec of_kind(t(), atom()) :: [map()]

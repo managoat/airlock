@@ -8,12 +8,13 @@ holds, and get a record of everything it did.
 > policy allowed, been refused one it did not, and the box was destroyed
 > after. The table below is from that run, not a mock-up.
 >
-> **Not built:** the record's Tools and Changes tabs (M2, in progress),
-> sessions do not survive the client going away (M1), and Sprites is the
-> only cloud provider wired up (M3).
+> **Not built:** the record's Changes tab (M2, in progress), sessions do
+> not survive the client going away (M1), and Sprites is the only cloud
+> provider wired up (M3).
 >
 > The brief is [CLAUDE.md](CLAUDE.md), the plan is [PLAN.md](PLAN.md), and
-> [NOTES-M0.md](NOTES-M0.md) records what building it found.
+> [NOTES-M0.md](NOTES-M0.md) and [NOTES-M2.md](NOTES-M2.md) record what
+> building it found.
 
 ## The idea
 

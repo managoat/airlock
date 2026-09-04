@@ -111,11 +111,14 @@ defmodule Airlock.Render do
   def stage(_name, _status), do: :ok
 
   @doc """
-  The record of a finished run: what the agent said, and every request it
-  made.
+  The record of a finished run, for the terminal: what the agent said, and
+  every request it made.
 
-  Two of `PLAN.md`'s four tabs. Tools and Changes arrive with M2, where
-  this becomes an exported file rather than a terminal.
+  A **summary**, not the record. The record is `Airlock.Record`'s file, and
+  it holds all four of `PLAN.md`'s tabs; this is the part worth reading
+  without opening anything, printed where the run was started. The two are
+  deliberately not the same artefact — a summary you have to open a browser
+  for is not one, and a record that scrolls away is not one either.
   """
   @spec record(map()) :: String.t()
   def record(result) do

@@ -206,13 +206,14 @@ defmodule Airlock.RecordTest do
       assert html =~ ~s(<span class="status denied">failed</span>)
       assert html =~ "boom"
 
-      # Rendered inside its call, not again as a loose block.
-      assert html |> String.split("boom") |> length() == 2
+      # In the transcript the result is rendered inside the call it belongs
+      # to, not again as a loose block after it. (It appears a second time
+      # in the Tools panel, which is a different tab and the point of it.)
+      transcript_panel = panel(html, "transcript")
+      assert transcript_panel |> String.split("boom") |> length() == 2
     end
 
-    test "tool_calls/1 pairs a call with its result", %{policy: policy} do
-      _ = policy
-
+    test "the tools panel counts the calls, times them, and names the tokens", %{policy: policy} do
       transcript =
         Transcript.new()
         |> add(%{"sessionUpdate" => "tool_call", "toolCallId" => "t1", "title" => "read"})
@@ -221,9 +222,35 @@ defmodule Airlock.RecordTest do
           "toolCallId" => "t1",
           "status" => "completed"
         })
+        |> Transcript.finish("end_turn", %{"input" => 12, "output" => 3})
 
-      assert [%{name: "read", result: %{kind: :tool_result, error?: false}}] =
-               Record.tool_calls(transcript)
+      html = Record.html(result(policy, transcript: transcript))
+      tools = panel(html, "tools")
+
+      assert tools =~ "read"
+      assert tools =~ ~s(<span class="verdict passthrough">ok</span>)
+      assert tools =~ "input"
+      assert html =~ ~s(<span class="count">1</span>)
+    end
+
+    test "a tool call with no terminal update is open, not failed", %{policy: policy} do
+      # A call that never reported an outcome did not fail. Saying it did
+      # invents one, and the record is evidence.
+      transcript =
+        Transcript.new()
+        |> add(%{"sessionUpdate" => "tool_call", "toolCallId" => "t1", "title" => "read"})
+
+      tools = policy |> result(transcript: transcript) |> Record.html() |> panel("tools")
+
+      assert tools =~ ~s(<span class="verdict malformed">open</span>)
+      refute tools =~ "failed"
+    end
+
+    test "a turn that reported no usage says so rather than showing zero", %{policy: policy} do
+      tools = policy |> result() |> Record.html() |> panel("tools")
+
+      assert tools =~ "reported no token usage"
+      assert tools =~ "not a turn that cost nothing"
     end
   end
 
@@ -242,6 +269,12 @@ defmodule Airlock.RecordTest do
   end
 
   # ── helpers ────────────────────────────────────────────────────────────────
+
+  # One tab's panel. The panels are siblings, so the next `<section` ends it.
+  defp panel(html, id) do
+    [_, rest] = String.split(html, ~s(<section class="panel" id="panel-#{id}">), parts: 2)
+    rest |> String.split("<section class=\"panel\"", parts: 2) |> List.first()
+  end
 
   defp result(policy, overrides \\ []) do
     base = %{
