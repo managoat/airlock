@@ -9,7 +9,7 @@ doc/
 .elixir_ls/
 .lexical/
 erl_crash.dump
-airlock
+/airlock
 *.tar
 .DS_Store
 .env

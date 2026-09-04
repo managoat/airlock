@@ -3,8 +3,11 @@
 Read `CLAUDE.md` first; it is the brief and the boundary. This file is the
 order of work and the acceptance criteria.
 
-Nothing below is built. Each milestone lists what "done" means concretely,
-because "M1 is finished" is otherwise a matter of opinion.
+M0 steps 1–3 are built as of 2026-09-03 and are marked as such below;
+nothing else is. Each milestone lists what "done" means concretely, because
+"M1 is finished" is otherwise a matter of opinion. `NOTES-M0.md` records
+what building those three steps found, including two blockers further down
+M0 and several corrections to this file.
 
 Two things set this ordering, and both come from `CLAUDE.md`:
 
@@ -59,6 +62,15 @@ while the credential path is being proven. Mind that this is exactly the
 never held a real credential; and the egress log shows at least one `injected`
 row, one `passthrough` row and one `denied` row, each naming the rule that
 decided it.
+
+> **Steps 1–3 are built (2026-09-03). Steps 4–9 are blocked in ways this
+> ordering did not anticipate.** The local box cannot be sealed —
+> `Runner.Adapter.apply_network_policy/2` refuses outright — and there is no
+> runner daemon outside Fountain's private CLI. The egress-log half of "done
+> when" is demonstrated without an agent. **Read `NOTES-M0.md` before
+> continuing;** §1 sets out the options for step 6, and they are a decision
+> rather than a correction. Note also that `passthrough` in that sentence is
+> not the event's `outcome` — §4.
 
 **Deliberately not measuring cold start.** It stopped being the risk when the
 product stopped being about burst parallelism.
@@ -161,6 +173,7 @@ credentials:
 
   - host: "github.com/managoat/*"
     scheme: basic
+    username: x-access-token   # required; :basic is a pair, NOTES-M0.md §5
     from: env:GITHUB_TOKEN
 
 unmatched: deny
@@ -172,9 +185,13 @@ Three notes before implementing it:
 - `allow` and `credentials` are different layers. `allow` is the sandbox's own
   default-deny egress policy; `credentials` is what the proxy does with a request
   that got out. A host in `credentials` must also be in `allow`.
-- Several rules may match one request. The first matched rule that sets a header
-  wins, and every matched `:substitute` rule applies. Preserve that ordering when
-  compiling — it is the library's contract, not an accident.
+- Several rules may match one request. ~~The first matched rule that sets a
+  header wins~~ — **out of date as of broker 0.7.0.** The *most specific*
+  matched rule sets the header: exact host over wildcard, then a pinned
+  port, then the longest literal path prefix, and declaration order breaks
+  only what is left. Every matched `:substitute` rule still applies, in
+  declaration order. Preserve that ordering when compiling — it is the
+  library's contract, not an accident. `NOTES-M0.md` §3.
 - **One host may need more than one credential.** `api.anthropic.com` can carry
   both a subscription token and an API key, because an org can refuse the OAuth
   token mid-conversation and `Claude.fall_back_to_api_key/2` swaps to the key

@@ -3,9 +3,17 @@
 Run a coding agent on a machine you chose, with credentials that machine never
 holds, and get a record of everything it did.
 
-> **Status: design only.** Nothing is built yet. This repository currently
-> holds the brief ([CLAUDE.md](CLAUDE.md)) and the build plan
-> ([PLAN.md](PLAN.md)).
+> **Status: early.** The containment path works and there is no agent on it
+> yet. A policy is parsed, validated and compiled onto both enforcement
+> layers; the broker runs with a per-run session and per-run CA; every
+> request it decides about becomes a row. **Not built:** provisioning a
+> box, bringing up a coding agent, or exporting the record as a file — so
+> the `Then you get the record` table below is real, and the agent that
+> would generate it is not.
+>
+> The brief is [CLAUDE.md](CLAUDE.md), the plan is [PLAN.md](PLAN.md), and
+> [NOTES-M0.md](NOTES-M0.md) records what building the first three steps
+> found — including two blockers on the local-box path.
 
 ## The idea
 
@@ -36,15 +44,16 @@ work. The agent sees placeholders where your keys should be. The real
 credentials are attached at a proxy that is the box's only way out, so a
 placeholder lifted off the disk is worth nothing anywhere else.
 
-Then you get the record:
+Then you get the record — this is `airlock broker` with `curl` standing in
+for a box, reformatted:
 
 | Method | Host | Path | Verdict | Rule |
 |---|---|---|---|---|
 | POST | api.anthropic.com | /v1/messages | injected | anthropic |
-| GET | registry.npmjs.org | /stripe | passthrough | — |
+| GET | registry.npmjs.org | /stripe | passthrough | allow:registry.npmjs.org |
 | POST | api.stripe.com | /v1/customers | injected | stripe |
-| GET | pastebin.com | /raw/x9f2 | **denied** | unmatched |
-| GET | 169.254.169.254 | /latest/meta-data/ | **denied** | unmatched |
+| GET | pastebin.com | /raw/x9f2 | **denied** | — |
+| GET | 169.254.169.254 | /latest/meta-data/ | **denied** | — |
 
 Those last two rows are the point. An agent holding your Stripe key tried to
 reach a paste site and the cloud instance metadata endpoint, and you have a line
@@ -57,6 +66,17 @@ because there is no chokepoint to produce it from.
   tokens, their box.
 - Not a place agents live. It runs a job and gives you the record.
 - Not optimised to start fast. It is optimised to be safe to leave.
+
+## Try the part that works
+
+```
+mix escript.build
+./airlock check priv/policies/example.yaml    # what a policy compiles to
+./airlock broker priv/policies/example.yaml   # the proxy, and the log, live
+```
+
+`broker` prints a proxy URL. Point anything at it — `curl -x`, a shell with
+`HTTPS_PROXY` set — and the rows appear as requests end.
 
 ## Built on
 

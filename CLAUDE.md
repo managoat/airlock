@@ -28,9 +28,20 @@ itself, and that one is interchangeable by design.
 
 ## Status
 
-**Nothing is built here yet.** As of 2026-09-03 this repository contains this
-brief, `PLAN.md` and a licence. A sibling product, goatherd, shares the
-substrate and has two findings worth carrying over; see the next section.
+**M0 steps 1–3 are built; nothing else is.** As of 2026-09-03 this
+repository holds this brief, `PLAN.md`, `NOTES-M0.md` and an Elixir
+project: the policy file parsed, validated and compiled onto both layers;
+the broker started with a per-run session; the egress log as a telemetry
+handler; and the `Runner.Host` and WebSocket endpoint a local box would be
+presented through. Provisioning, the runtime, the seal, the turn and the
+record-as-a-file (M0 steps 4–9) are **not built**, which is why
+`Airlock.CLI` has no `run` command.
+
+**Read `NOTES-M0.md` before planning further work.** Building steps 1–3
+found two blockers that reorder M0 — the local box cannot be sealed, and
+there is no runner daemon — and corrected several facts in this file. A
+sibling product, goatherd, shares the substrate and has two findings worth
+carrying over; see the next section.
 
 Carry this rule over from Fountain, it is load-bearing: **never describe
 unbuilt behaviour as existing.** If a document, docstring or README describes
@@ -161,8 +172,8 @@ its ADR 0037 and graduated in #1345 / #1368. Source lives at
 | `managoat_sandbox` | 0.2.1 | The machine layer: create / exec / spawn / attach / suspend / destroy over Sprites, E2B and Daytona, one error taxonomy, a conformance case and a `Fake`. Default-deny egress via `NetworkPolicy`. | Nothing. goatherd already uses it. |
 | `managoat_runtimes` | 0.3.0 | Gets claude, codex, gemini or opencode onto a box and up on ACP: pinned adapter versions, file layout, instructions file, skills tree, credential delivery, per-runtime quirks. 0.3.0 adds the optional-callback dispatchers. | Nothing. Pin `~> 0.3`; 0.2.x has no dispatchers. |
 | `managoat_acp` | 0.1.2 | The session: `Peer`, `Protocol`, `Blocks`, `Permissions`, `Usage`, `Tracer`. One block format and one permission model across all four runtimes. | Nothing. goatherd already uses it. |
-| `managoat_broker` | 0.4.0 | **The reason this product exists.** Rules matching `host[:port][/path]` across six schemes, `unmatched_host_policy: :deny`, expiring sessions, and a terminal per-request telemetry event carrying status, error and duration. | A `Broker.Store` (`Store.Memory` is the reference) and a CA seed. |
-| `managoat_runner` | 0.2.1 | A daemon on the user's own machine, dialling out over a WebSocket, presenting as a sandbox provider. The cheapest path to a reachable broker, and the box for M0 through M2. | A `Runner.Host`. `Host.Local` over a plain `Registry` is the guess; it is M0's first task and the guess is unverified. |
+| `managoat_broker` | **0.8.0** | **The reason this product exists.** Rules matching `host[:port][/path]` across six schemes, `unmatched_host_policy: :deny`, expiring sessions, and a terminal per-request telemetry event carrying status, error and duration. | A `Broker.Store` (`Store.Memory` is the reference) and a CA seed. |
+| `managoat_runner` | 0.2.1 | The *platform* half of a self-hosted runner: the sandbox adapter, the WebSocket connection process, the host behaviour. **Not the daemon** — that is Go, in Fountain's private CLI, and `FakeDaemon` runs nothing. `NOTES-M0.md` §2. | The `WebSock` transport (Airlock's `Box.Endpoint`), and a `Runner.Host` — which turned out to ship as `Host.Local`, so Airlock configures it rather than writing one. |
 | `managoat_substitution` | 0.1.1 | `${VAR}` over nested config, reporting every missing key at once. | Nothing. |
 | `managoat_mcp_auth` | 0.1.1 | MCP authorization discovery (RFC 9728 / 8414 / 7591) behind an SSRF guard. | Only once policies can name MCP servers. |
 | `managoat_docs` | 0.1.1 | A compile-time embedded manual and its guardrail tests. | Optional, if Airlock grows a `/docs`. |
@@ -172,13 +183,14 @@ its ADR 0037 and graduated in #1345 / #1368. Source lives at
 
 Much of the design behind `PLAN.md` was derived by reading the **0.1.0** sources
 vendored in Fountain's `deps/`. Several libraries have moved well past that —
-`managoat_broker` is three minors ahead at 0.4.0, and `sandbox`, `runner` and
-`runtimes` are at 0.2.1. **Verify every API against the version you actually
+`managoat_broker` is **seven** minors ahead at **0.8.0**, and `sandbox`,
+`runner` and `runtimes` are at 0.2.1. **Verify every API against the version you actually
 pin**, and prefer the library's own moduledoc and CHANGELOG to anything
 restated here. Those moduledocs are unusually good; they carry the normative
 semantics, not just the signatures.
 
-Two changes since 0.1.0 that Airlock depends on directly:
+Changes since 0.1.0 that Airlock depends on directly, or that contradict
+something written elsewhere in this file:
 
 - **The broker's request event is terminal** (0.3.0). It now carries `status`,
   `error` and a monotonic `duration` alongside `count`, and it fires when the
@@ -189,6 +201,20 @@ Two changes since 0.1.0 that Airlock depends on directly:
   needed it is correlated start and stop events, not two meanings on one.
 - **`:substitute` rules reach the request target**, not headers alone (0.2.0),
   so a credential a client puts in a URL path is brokerable.
+- **Rule matching is by specificity, not declaration order** (0.7.0). The
+  *most specific* matched rule sets the header — exact host over wildcard,
+  then a pinned port, then the longest literal path prefix — and
+  declaration order breaks only what is left. Anywhere below this line
+  still says "the first matched rule wins", that line is out of date.
+- **`:substitute` placeholders are validated** (0.5.0) and a rule with an
+  unusable one is refused: four characters, a letter or digit, a boundary.
+  `Injector.valid_placeholder?/1` is public so a host checks where the
+  session is built. `Airlock.Policy` checks at parse time.
+- **The event's `outcome` is not the record's verdict.** `:passthrough` is
+  emitted only when *no rule matched* and the session lets unmatched hosts
+  through, so under `unmatched: deny` it is unreachable and a request that
+  matched a `:passthrough` rule reports `:injected`. The record derives its
+  verdict from the matched rule's scheme instead. `NOTES-M0.md` §4.
 
 ## What you actually have to build
 
@@ -299,6 +325,15 @@ in goatherd. They are not hypothetical.
   one provider treats an empty rule list as no-enforcement; translating that
   fail-open quirk is the adapter's job and it already does it. Do not
   reimplement it.
+- **The runner cannot be sealed at all.** `Runner.Adapter` does not
+  advertise `:network_policy` and `apply_network_policy/2` returns
+  `{:error, :not_supported}` — "the machine is the user's and so is its
+  network". Sprites, E2B and Daytona all support it. This is in direct
+  conflict with M0's ordering, which picks the local box *and* makes
+  sealing it step 6. `NOTES-M0.md` §1 has the options.
+- `Managoat.Sandbox`'s default adapter map holds `sprites`, `e2b` and
+  `daytona` only. `:runner` ships in another package, so a host has to
+  register it or `build_handle(:runner, _)` raises.
 
 **Sandboxes and runtimes**
 

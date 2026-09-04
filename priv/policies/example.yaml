@@ -1,0 +1,49 @@
+# An example Airlock policy: the complete list of hosts a job may reach,
+# and which credential goes to which host.
+#
+# `allow` is what the job may reach. Everything not named here is denied,
+# and the denial is a row in the record naming the rule that decided it.
+allow:
+  - github.com
+  - registry.npmjs.org
+  - api.stripe.com
+  - api.anthropic.com
+
+# `credentials` is what the proxy does with a request that got out. The box
+# never holds any of these values: `from:` is a reference, resolved when a
+# broker session is minted, and the box is handed a placeholder instead.
+credentials:
+  # The agent's own inference credential. `substitute` is the shape for a
+  # credential the agent addresses itself: it sends the placeholder it was
+  # given, and the proxy replaces it with the real key.
+  - host: api.anthropic.com
+    name: anthropic
+    scheme: substitute
+    placeholder: "PLACEHOLDER-ANTHROPIC"
+    from: env:ANTHROPIC_API_KEY
+
+  # A credential the agent knows nothing about: it makes a plain request
+  # and the proxy attaches the header.
+  - host: api.stripe.com
+    name: stripe
+    scheme: bearer
+    from: env:STRIPE_RESTRICTED_KEY
+
+  # Scoped narrower than the host. `allow` says github.com is reachable;
+  # this says the token is attached only under /managoat/, and a request to
+  # any other path on github.com goes out with no credential at all.
+  #
+  # `username` is required: the broker's basic scheme is a pair, a policy
+  # names one variable, and both orders are real for GitHub.
+  - host: "github.com/managoat/*"
+    name: github
+    scheme: basic
+    username: x-access-token
+    from: env:GITHUB_TOKEN
+
+# The only value that makes `allow` mean anything. Under `passthrough` the
+# proxy forwards a request to a host no rule names — and since the box's
+# only egress is the proxy, that is the whole allow list disabled.
+unmatched: deny
+
+expires_in: "4h"
