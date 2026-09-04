@@ -1,134 +1,107 @@
 # Airlock
 
-Run a coding agent on a machine you chose, with credentials that machine never
-holds, and get a record of everything it did.
+Run a coding agent in a sealed sandbox without putting real credentials on the
+machine.
 
-> **Status: M0 and M2 done.** A real Claude agent has run on a sealed cloud box
-> holding a placeholder where the API token should be, fetched a host the
-> policy allowed, been refused one it did not, and the box was destroyed
-> after. The table below is from that run, not a mock-up.
->
-> The record is a self-contained HTML file with all four tabs — Transcript,
-> Egress, Tools, Changes — written beside you at the end of the run.
->
-> **Not built:** sessions do not survive the client going away (M1), and
-> Sprites is the only cloud provider wired up (M3).
->
-> The brief is [CLAUDE.md](CLAUDE.md), the plan is [PLAN.md](PLAN.md), and
-> [NOTES-M0.md](NOTES-M0.md) and [NOTES-M2.md](NOTES-M2.md) record what
-> building it found.
+Airlock routes the sandbox's outbound traffic through a default-deny proxy. The
+agent receives placeholders; the proxy adds or substitutes credentials only for
+destinations named in policy. After the run, Airlock destroys the sandbox and
+writes a self-contained HTML record containing the transcript, egress decisions,
+tool calls, and filesystem changes.
 
-## The idea
+> **Status:** early prototype. The Claude + Sprites path and HTML records work
+> end to end. Airlock cannot yet reattach after the CLI exits, and Sprites is the
+> only cloud provider wired up.
 
-You write a policy: the complete list of hosts a job may reach, and which
-credential goes to which host.
+## How it works
+
+1. A YAML policy defines every reachable host and where credentials may go.
+2. Airlock provisions a fresh sandbox, installs the agent, and seals egress to
+   the broker.
+3. The broker allows or denies each request and injects credentials only when a
+   rule matches.
+4. Airlock writes `airlock-<run>.html` and destroys the sandbox.
+
+Denied requests are part of the record, including traffic the agent or its
+harness attempted without mentioning it in the transcript.
+
+## Build
+
+Airlock requires Elixir 1.18 or later.
+
+```sh
+mix deps.get
+mix escript.build
+./airlock check priv/policies/example.yaml
+```
+
+`check` parses a policy, shows the compiled network and credential rules, and
+reports missing environment variables.
+
+## Policy
 
 ```yaml
 allow:
-  - github.com
-  - registry.npmjs.org
-  - api.stripe.com
+  - api.anthropic.com
+  - example.com
 
 credentials:
-  - host: api.stripe.com
-    scheme: bearer
-    from: env:STRIPE_RESTRICTED_KEY
-
   - host: api.anthropic.com
-    scheme: substitute          # the agent sends the key itself
-    placeholder: "PLACEHOLDER-ANTHROPIC"
+    scheme: substitute
+    placeholder: PLACEHOLDER-ANTHROPIC
     from: env:ANTHROPIC_API_KEY
 
 unmatched: deny
 ```
 
-Airlock provisions a box, brings up a coding agent on it, and lets the agent
-work. The agent sees placeholders where your keys should be. The real
-credentials are attached at a proxy that is the box's only way out, so a
-placeholder lifted off the disk is worth nothing anywhere else.
+See [`priv/policies/example.yaml`](priv/policies/example.yaml) for bearer, basic,
+and path-scoped credential rules.
 
-Then you get the record: one self-contained HTML file per run, written
-beside you, with the transcript and every request the proxy decided about.
-No server, nothing to fetch, nothing to sign in to — you hand someone the
-file. This is a real run, reformatted — Claude on a sealed Sprites box,
-asked to fetch two URLs:
+## Run
 
-| Method | Host | Path | Verdict | Rule |
-|---|---|---|---|---|
-| POST | api.anthropic.com | /v1/messages | injected | anthropic |
-| POST | api.anthropic.com | /api/event_logging/v2/batch | injected | anthropic |
-| GET | example.com | / | passthrough | allow:example.com |
-| CONNECT | pastebin.com | pastebin.com:443 | **denied** | — |
-| CONNECT | http-intake.logs.us5.datadoghq.com | :443 | **denied** | — |
+A cloud sandbox must be able to reach the local broker. For a development run,
+bind the broker to a known port and expose that port with a raw TCP tunnel:
 
-The last two rows are the point, and they are not the same kind of row. The
-agent tried the paste site because we asked it to. **Nobody asked for the
-other one** — that is the harness's own telemetry, to a third party, which
-no policy named and which the transcript never mentions. It is in the
-record anyway, because the proxy is the box's only way out. A tool running
-on your laptop cannot produce that line, because there is no chokepoint to
-produce it from.
-
-## What it is not
-
-- Not multi-tenant. No accounts, no roles, no hosted tier. One human, their
-  tokens, their box.
-- Not a place agents live. It runs a job and gives you the record.
-- Not optimised to start fast. It is optimised to be safe to leave.
-
-## Try it
-
-```
-mix escript.build
-
-./airlock check priv/policies/example.yaml    # what a policy compiles to
-./airlock broker priv/policies/example.yaml   # the proxy, and the log, live
-```
-
-`broker` prints a proxy URL. Point anything at it — `curl -x`, a shell with
-`HTTPS_PROXY` set — and the rows appear as requests end. That path needs no
-credentials at all and is the quickest way to see what the record looks
-like.
-
-A whole run needs a box and a broker the box can reach:
-
-```
+```sh
 export SPRITES_TOKEN=...
-ngrok tcp 14322                               # a raw TCP tunnel, not an HTTP one
+export ANTHROPIC_API_KEY=...
 
-./airlock run policy.yaml "fix the failing test" \
+ngrok tcp 14322
+
+./airlock run policy.yaml "fetch https://example.com" \
+  --broker-port 14322 \
   --broker-host 4.tcp.ngrok.io:19482
 ```
 
-The run prints a summary and writes `airlock-<run>.html` beside you. That
-file is the record: open it, or send it to someone who was not there.
+Replace `--broker-host` with the address printed by ngrok. An HTTP tunnel will
+not work because the broker handles `CONNECT` traffic.
 
-A run destroys its own box. If you kill the CLI before it gets there, the
-box survives — `airlock boxes` finds it and `airlock reap --yes` destroys
-it.
+> **Security:** the broker connection is currently plaintext, so a public tunnel
+> exposes its session token in transit. Treat tunneling as a development setup
+> and use short-lived, narrowly scoped credentials.
 
-The broker is a listener the box dials *out* to, so it needs an address on
-the box's network. An HTTP reverse proxy will not do — the proxy protocol
-is `CONNECT` — and a tunnel puts the session token on the public internet,
-which [`Airlock.Broker.Reachability`](lib/airlock/broker/reachability.ex)
-warns about and explains. A box that cannot be sealed
-(`--provider runner`) refuses to run unless you pass `--unsealed`.
+The default tool-permission mode is `ask`. Because no human is attached to
+answer, requests are denied and recorded; pass `--permissions auto_allow` for an
+unattended run that may use tools.
 
-## Built on
+If the CLI is killed before cleanup, the sandbox may survive:
 
-The nine [`managoat_*`](https://github.com/managoat) libraries, all Apache-2.0
-on Hex:
-[`sandbox`](https://hex.pm/packages/managoat_sandbox) (the machine, and
-default-deny egress),
-[`runtimes`](https://hex.pm/packages/managoat_runtimes) (claude, codex, gemini
-and opencode, up and speaking ACP),
-[`acp`](https://hex.pm/packages/managoat_acp) (the session, blocks, permissions,
-usage, tracing),
-[`broker`](https://hex.pm/packages/managoat_broker) (the egress proxy and the
-request log) and
-[`runner`](https://hex.pm/packages/managoat_runner) (your own machine as a
-provider).
+```sh
+./airlock boxes
+./airlock reap --yes
+```
 
-## Licence
+`reap` destroys every Airlock-created box in the selected provider account.
 
-Apache-2.0. See [LICENSE](LICENSE).
+Run `./airlock help` for all runtimes, providers, and options.
+
+## Project docs
+
+- [`CLAUDE.md`](CLAUDE.md) — product and architecture brief
+- [`PLAN.md`](PLAN.md) — milestones and design decisions
+- [`NOTES-M0.md`](NOTES-M0.md) and [`NOTES-M2.md`](NOTES-M2.md) — implementation
+  findings
+
+## License
+
+Apache-2.0. See [`LICENSE`](LICENSE).
