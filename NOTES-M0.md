@@ -7,6 +7,10 @@ turned up four things that change the plan, and several smaller ones that
 change the code. They are recorded here rather than folded silently into
 `PLAN.md`, because two of them are decisions rather than corrections.
 
+**Update, later the same day:** steps 4–9 are now built too, on the
+decision recorded in [§7](#7-what-was-decided-and-what-it-changed). Four
+more findings came out of that and are in [§8](#8-findings-from-steps-49).
+
 ## Contents
 
 1. [Blocking: the local box cannot be sealed](#1-blocking-the-local-box-cannot-be-sealed)
@@ -15,6 +19,8 @@ change the code. They are recorded here rather than folded silently into
 4. [The event's `outcome` cannot produce the README's table](#4-the-events-outcome-cannot-produce-the-readmes-table)
 5. [Smaller findings](#5-smaller-findings)
 6. [Decisions taken](#6-decisions-taken)
+7. [What was decided, and what it changed](#7-what-was-decided-and-what-it-changed)
+8. [Findings from steps 4–9](#8-findings-from-steps-49)
 
 ---
 
@@ -270,3 +276,127 @@ sent no credential, and the last two rows are the ones the README is about.
 
 That is M0's "done when" for the egress log, minus the agent: steps 4
 through 9 are not built, and step 6 cannot be on this box.
+
+
+---
+
+## 7. What was decided, and what it changed
+
+Settled 2026-09-03, after §1's options were put side by side:
+
+**The box is Sprites, reached over a tunnel** — option (c), pulling M3's
+reachability forward. The reasoning that decided it: the local runner was
+chosen in `PLAN.md` because it was the *cheapest* path to a reachable
+broker, and both blockers say it is not cheap. It needs a daemon that is
+not public, and it can never be sealed. Sprites needs a tunnel and nothing
+else, and goatherd has already proved the provisioning path.
+
+So M0's ordering inverts. The local box is no longer the M0–M2 box; it is
+a path Airlock still supports (`--provider runner`) and cannot seal, and
+`Airlock.Run` refuses to run on it unless told `--unsealed` in as many
+words.
+
+`Airlock.Test.FakeBox` gets option (b) as well, for free: the fake
+advertises `:network_policy`, so the seal is genuinely applied in
+`Airlock.RunTest` and read back off the box while the turn is running.
+That is the test `PLAN.md` asked for.
+
+**Both library findings were filed:** managoat_broker#27 (the event cannot
+distinguish a matched `:passthrough` rule from an attached credential) and
+managoat_runner#4 (should the daemon protocol ever carry a seal).
+
+## 8. Findings from steps 4–9
+
+### `SPRITES_TOKEN` in the environment did nothing
+
+The escript trap, in its purest form. Every `managoat_sandbox` adapter
+reads its own application environment — `Managoat.Sandbox.Config.get(Sprites,
+:token)` — which in a mix project `config/runtime.exs` fills in. **An
+escript never runs it.** So `SPRITES_TOKEN=… airlock run` died inside the
+library with
+
+    ** (RuntimeError) SPRITES_TOKEN is not set — cannot talk to sprites.dev
+
+while the variable was plainly set in the shell that ran it. `Airlock.Boot`
+now lifts the provider credentials into the libraries' config itself, and
+`Airlock.Run` preflights them so a missing one is an error naming the
+variable rather than a raise several frames down.
+
+### The peer's default permission policy is `auto_allow`
+
+`Managoat.ACP.Permissions.verdict_for/2` falls back to `auto_allow` when a
+policy names nothing, and `Managoat.ACP.Peer` starts with
+`permission_policy: %{}`. A peer started the obvious way therefore
+**approves every tool call itself**, and the `{:permission_ask, …}` report
+never reaches its owner.
+
+That is a fair default for an interactive product with a human in the loop.
+It is the wrong one for M0, which runs one prompt unattended on a box
+holding a live proxy address. `Airlock.Run` names `%{"default" => "ask"}`
+explicitly and denies what arrives, because there is nobody to ask.
+
+Worth knowing rather than filing: the library is not wrong, but "start a
+peer and you have an auto-approving agent" is a sharp edge for a host that
+does not read `Permissions` first.
+
+### `Managoat.Sandbox.Fake` raises on any argv but its own
+
+The Fake's commands speak `out:` / `err:` / `exit:` / `stay` / `drop`, and
+anything else is a `FunctionClauseError` out of `Fake.script/1` — not a
+nonzero exit, a raise. Its moduledoc lists "drive a provisioning path
+without a network" as one of its three jobs, and no real provisioning path
+survives it: every step is `bash -lc <script>`, starting with
+`Managoat.Runtimes.ACP.install/3`'s npm install.
+
+`test/support/fake_box.ex` wraps it so `exec/4` is total. Worth filing;
+not yet filed.
+
+### The block key is `:body`, not `:text`
+
+`Managoat.ACP.Blocks` emits `%{kind: :text, body: "…"}`. Reading `:text`
+gets `nil` on every block and concatenates to `""` — an agent that said
+nothing, which is exactly what a broken transcript should not look like.
+Caught by a test that asserted on content rather than on shape.
+
+### `Managoat.Runner.Names` decides no placement, so Airlock does
+
+A runner sandbox name carries the runner id (`runner-<32 hex>-<8 hex>`),
+because a name is the only thing `Managoat.Sandbox` hands an adapter.
+`Names`' moduledoc says which runner a *new* sandbox lands on "is the
+host's placement policy and is not here" — correct, and it means a host
+that mints an ordinary name gets `{:invalid, {:not_a_runner_sandbox_name,
+…}}` at create. `Airlock.Box.name_for/2` mints per provider.
+
+### The token rides in the clear over a tunnel
+
+Not a library finding — an architecture one, and the reason
+`Airlock.Broker.Reachability` exists. `Managoat.Broker`'s listener is
+plaintext by construction (`port` is documented as "the plaintext listener
+port"; there is no TLS option). Over a tunnel to a cloud sandbox, every
+request carries `Proxy-Authorization: Basic base64(token:label)` over the
+public internet, and that token is the authority to use every credential
+the policy names.
+
+Bodies are safe — they are TLS inside the `CONNECT` tunnel — but the token
+and the host list are not. Mitigated by `expires_in` and a per-run token;
+fixed only by a tailnet or a TLS listener. `airlock run` prints the warning
+rather than swallowing it.
+
+Also worth recording: **`cloudflared` quick tunnels do not work at all**.
+They are HTTP reverse proxies and will not forward `CONNECT`. A raw TCP
+tunnel (`ngrok tcp`) does.
+
+### Still not verified
+
+No agent has run. There are no Sprites credentials on this machine — no
+`SPRITES_TOKEN`, no `~/.sprites/sprites.json`, no `sprites` CLI — so
+everything above is tested against `Managoat.Sandbox.Fake`,
+`Managoat.ACP.Testing.ScriptedAgent` and a real broker with a real origin.
+What that leaves unproven is the one thing M0 exists to answer: whether a
+real agent does real work with credentials it never holds.
+
+To find out:
+
+    export SPRITES_TOKEN=...            # or ANTHROPIC_API_KEY for the policy
+    ngrok tcp <the broker port>
+    airlock run policy.yaml "..." --broker-host 4.tcp.ngrok.io:19482

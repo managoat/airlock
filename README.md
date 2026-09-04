@@ -3,17 +3,20 @@
 Run a coding agent on a machine you chose, with credentials that machine never
 holds, and get a record of everything it did.
 
-> **Status: early.** The containment path works and there is no agent on it
-> yet. A policy is parsed, validated and compiled onto both enforcement
-> layers; the broker runs with a per-run session and per-run CA; every
-> request it decides about becomes a row. **Not built:** provisioning a
-> box, bringing up a coding agent, or exporting the record as a file — so
-> the `Then you get the record` table below is real, and the agent that
-> would generate it is not.
+> **Status: built, never run for real.** All of M0 is implemented: a policy
+> parsed and compiled onto both enforcement layers, a per-run broker and CA,
+> a box provisioned and **sealed**, a coding agent brought up holding
+> placeholders instead of your keys, one turn driven over ACP, the record
+> printed, the box destroyed.
+>
+> No agent has actually run, because this machine has no Sprites
+> credentials. The containment path below — the proxy, the injection, the
+> denials — is real and tested end to end against a live origin. The agent
+> on the other side of it is not yet.
 >
 > The brief is [CLAUDE.md](CLAUDE.md), the plan is [PLAN.md](PLAN.md), and
-> [NOTES-M0.md](NOTES-M0.md) records what building the first three steps
-> found — including two blockers on the local-box path.
+> [NOTES-M0.md](NOTES-M0.md) records what building it found — including why
+> the box is a cloud sandbox rather than your laptop.
 
 ## The idea
 
@@ -67,16 +70,36 @@ because there is no chokepoint to produce it from.
 - Not a place agents live. It runs a job and gives you the record.
 - Not optimised to start fast. It is optimised to be safe to leave.
 
-## Try the part that works
+## Try it
 
 ```
 mix escript.build
+
 ./airlock check priv/policies/example.yaml    # what a policy compiles to
 ./airlock broker priv/policies/example.yaml   # the proxy, and the log, live
 ```
 
 `broker` prints a proxy URL. Point anything at it — `curl -x`, a shell with
-`HTTPS_PROXY` set — and the rows appear as requests end.
+`HTTPS_PROXY` set — and the rows appear as requests end. That path needs no
+credentials at all and is the quickest way to see what the record looks
+like.
+
+A whole run needs a box and a broker the box can reach:
+
+```
+export SPRITES_TOKEN=...
+ngrok tcp 14322                               # a raw TCP tunnel, not an HTTP one
+
+./airlock run policy.yaml "fix the failing test" \
+  --broker-host 4.tcp.ngrok.io:19482
+```
+
+The broker is a listener the box dials *out* to, so it needs an address on
+the box's network. An HTTP reverse proxy will not do — the proxy protocol
+is `CONNECT` — and a tunnel puts the session token on the public internet,
+which [`Airlock.Broker.Reachability`](lib/airlock/broker/reachability.ex)
+warns about and explains. A box that cannot be sealed
+(`--provider runner`) refuses to run unless you pass `--unsealed`.
 
 ## Built on
 

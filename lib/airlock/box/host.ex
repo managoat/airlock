@@ -117,11 +117,30 @@ defmodule Airlock.Box.Host do
   @spec module() :: module()
   def module, do: Config.host!()
 
-  @doc "Every runner currently connected, with the `meta` it registered with."
+  @doc "Start the host's registry, linked to the caller."
+  @spec start_link(term()) :: {:ok, pid()} | {:error, term()}
+  def start_link(opts \\ []), do: Local.start_link(opts)
+
+  @doc """
+  Every runner currently connected, with the `meta` it registered with.
+
+  `[]` when the registry has not been started, rather than the
+  `ArgumentError` `Registry.select/2` raises for an unknown registry: "no
+  runner is connected" and "the registry is not up" are the same answer to
+  a caller looking for a box, and only one of them is actionable.
+  """
   @spec online() :: [{String.t(), map()}]
-  def online, do: module().online()
+  def online do
+    module().online()
+  rescue
+    ArgumentError -> []
+  end
 
   @doc "The connection process for a runner id, or `nil`."
   @spec whereis(String.t()) :: pid() | nil
-  def whereis(runner_id) when is_binary(runner_id), do: module().whereis(runner_id)
+  def whereis(runner_id) when is_binary(runner_id) do
+    module().whereis(runner_id)
+  rescue
+    ArgumentError -> nil
+  end
 end

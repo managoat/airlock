@@ -51,6 +51,13 @@ defmodule Airlock.MixProject do
       # The egress credential proxy and the per-request telemetry event.
       # Four minors past what CLAUDE.md records; see NOTES-M0.md.
       {:managoat_broker, "~> 0.8.0"},
+      # Gets claude, codex, gemini or opencode onto a box and up on ACP.
+      # `~> 0.3` is required, not preferred: 0.2.x has no optional-callback
+      # dispatchers, and writing the `function_exported?/3` guard against
+      # them is the trap CLAUDE.md paid for twice.
+      {:managoat_runtimes, "~> 0.3.0"},
+      # The session: Peer, Blocks, Permissions, Usage, Tracer.
+      {:managoat_acp, "~> 0.1.2"},
       # The policy file.
       {:yaml_elixir, "~> 2.9"},
       # The transport for a local box. `managoat_runner` ships the `WebSock`

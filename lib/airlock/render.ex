@@ -89,6 +89,145 @@ defmodule Airlock.Render do
   end
 
   @doc """
+  A run's progress, one line per stage, to stderr so the record on stdout
+  stays a record.
+  """
+  @spec stage(String.t(), term()) :: :ok
+  def stage(name, :started), do: IO.puts(:stderr, "  #{pad(name, 10)} …")
+  def stage(name, :done), do: IO.puts(:stderr, "  #{pad(name, 10)} ok")
+
+  def stage("broker", {:ready, host}), do: IO.puts(:stderr, "  #{pad("broker", 10)} #{host}")
+
+  def stage(name, {:skipped, provider}),
+    do:
+      IO.puts(
+        :stderr,
+        "  #{pad(name, 10)} SKIPPED — #{provider} boxes cannot be sealed, and --unsealed was given"
+      )
+
+  def stage(name, {:failed, reason}),
+    do: IO.puts(:stderr, "  #{pad(name, 10)} failed: #{inspect(reason)}")
+
+  def stage(_name, _status), do: :ok
+
+  @doc """
+  The record of a finished run: what the agent said, and every request it
+  made.
+
+  Two of `PLAN.md`'s four tabs. Tools and Changes arrive with M2, where
+  this becomes an exported file rather than a terminal.
+  """
+  @spec record(map()) :: String.t()
+  def record(result) do
+    """
+
+    ── Transcript ──────────────────────────────────────────────────────────
+
+    #{Airlock.Transcript.text(result.transcript)}
+
+    #{tool_summary(result.transcript)}stopped: #{result.transcript.stop_reason || "—"}#{usage(result.transcript.usage)}
+
+    ── Egress ──────────────────────────────────────────────────────────────
+
+    #{header()}
+    #{egress(result.egress)}
+
+    box #{result.box} (#{if result.sealed?, do: "sealed", else: "UNSEALED"}), destroyed. run #{result.run}
+    """
+  end
+
+  @doc "Why a run stopped, in terms someone can act on."
+  @spec run_error(term(), Path.t()) :: String.t()
+  def run_error({:cannot_seal, provider}, _path) do
+    """
+    airlock: a #{provider} box cannot have a network policy applied, so this
+    run would not have been contained. Managoat.Runner.Adapter refuses
+    apply_network_policy/2 outright — "the machine is the user's and so is
+    its network" — and Airlock will not produce a record that claims
+    containment it did not have.
+
+    Use a provider that can be sealed (sprites, e2b, daytona), or pass
+    --unsealed to say you accept an uncontained box. See NOTES-M0.md §1.
+    """
+  end
+
+  def run_error({:unreachable_broker, host, kind, provider}, _path) do
+    """
+    airlock: a #{provider} box cannot reach #{host} — that is a #{kind} address,
+    and the box is not on this machine.
+
+    The broker is a listener the box dials out to, so it needs an address on
+    the box's network. A raw TCP tunnel works; an HTTP reverse proxy does
+    not, because the proxy protocol is CONNECT.
+
+      ngrok tcp <the broker's port>
+      airlock run ... --broker-host 4.tcp.ngrok.io:19482
+
+    Read Airlock.Broker.Reachability first: the listener is plaintext.
+    """
+  end
+
+  def run_error({:provider_not_configured, :sprites, var}, _path) do
+    """
+    airlock: no Sprites credentials, so there is no box to run on.
+
+    Set #{var} in your environment. Airlock reads it at start-up and
+    writes it into the library's config itself — an escript never runs
+    config/runtime.exs, so nothing else would.
+
+    (goatherd also falls back to the sprites CLI's keychain entry. Airlock
+    does not yet; NOTES-M0.md records it as not built.)
+    """
+  end
+
+  def run_error({:provider_not_configured, provider, var}, _path),
+    do: "airlock: no credentials for #{provider}. Set #{var} in your environment."
+
+  def run_error(:no_runner_connected, _path) do
+    """
+    airlock: no runner is connected, so there is no local box to run on.
+
+    A runner is a daemon on your machine that dials in to Airlock and
+    presents itself as a sandbox provider. Airlock ships the endpoint it
+    dials into (Airlock.Box.Endpoint) but not the daemon: that is a Go
+    binary in Fountain's private CLI and is not one of the nine libraries.
+    See NOTES-M0.md §2.
+
+    Use --provider sprites (or e2b, or daytona) instead.
+    """
+  end
+
+  def run_error({:create, reason}, path), do: run_error(reason, path)
+
+  def run_error({:denied, {:http, 401, _body}}, _path),
+    do: "airlock: the provider refused those credentials (401). Check the token."
+
+  def run_error({:denied, {:http, 403, _body}}, _path),
+    do: "airlock: the provider refused the request (403). Check the token's scope."
+
+  def run_error({:unknown_runtime, runtime, supported}, _path),
+    do: "airlock: no such runtime #{inspect(runtime)}. One of: #{Enum.join(supported, ", ")}."
+
+  def run_error({:bad_provider, provider, allowed}, _path),
+    do: "airlock: no such provider #{inspect(provider)}. One of: #{Enum.join(allowed, ", ")}."
+
+  def run_error({:bad_flags, flags}, _path),
+    do: "airlock: no such option: #{Enum.join(flags, ", ")}."
+
+  def run_error({:unexpected_args, args}, _path),
+    do: "airlock: unexpected argument: #{Enum.join(args, " ")}."
+
+  def run_error({:turn_timeout, _transcript}, _path),
+    do: "airlock: the turn did not finish in time. The box was destroyed."
+
+  def run_error({:adapter_exited, code, stderr}, _path),
+    do:
+      "airlock: the agent adapter exited (#{code}) before the turn ended." <>
+        if(stderr == "", do: "", else: "\n\n" <> stderr)
+
+  def run_error(reason, path), do: error(reason, path)
+
+  @doc """
   A parse or start failure, in the terms of the file the user wrote.
 
   Every branch names the key or the entry, because a policy is a file a
@@ -183,6 +322,10 @@ defmodule Airlock.Render do
         "so it can never match: the box cannot reach the host, so no request ever arrives " <>
         "for the proxy to attach it to. Add the host to `allow`, or drop the credential."
 
+  def error({:bad_provider, _provider, _allowed} = reason, path), do: run_error(reason, path)
+  def error({:bad_flags, _flags} = reason, path), do: run_error(reason, path)
+  def error({:unexpected_args, _args} = reason, path), do: run_error(reason, path)
+
   def error({:missing_vars, names}, _path),
     do:
       "airlock: #{plural(names, "this variable is", "these variables are")} not set: " <>
@@ -191,6 +334,23 @@ defmodule Airlock.Render do
   def error(other, path), do: "airlock: #{path}: #{inspect(other)}"
 
   # ── parts ──────────────────────────────────────────────────────────────────
+
+  defp egress([]), do: "  (no requests — the agent reached nothing)"
+  defp egress(rows), do: Enum.map_join(rows, "\n", &row/1)
+
+  defp tool_summary(transcript) do
+    case length(Airlock.Transcript.of_kind(transcript, :tool_use)) do
+      0 -> ""
+      n -> "#{n} tool call(s). "
+    end
+  end
+
+  defp usage(nil), do: ""
+
+  defp usage(usage) do
+    " · " <>
+      Enum.map_join(usage, ", ", fn {key, value} -> "#{key} #{value}" end)
+  end
 
   # The other layer, said out loud: the box's own egress policy names the
   # broker and nothing else, and the hosts below are reachable only through

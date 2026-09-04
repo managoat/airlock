@@ -28,20 +28,25 @@ itself, and that one is interchangeable by design.
 
 ## Status
 
-**M0 steps 1–3 are built; nothing else is.** As of 2026-09-03 this
-repository holds this brief, `PLAN.md`, `NOTES-M0.md` and an Elixir
-project: the policy file parsed, validated and compiled onto both layers;
-the broker started with a per-run session; the egress log as a telemetry
-handler; and the `Runner.Host` and WebSocket endpoint a local box would be
-presented through. Provisioning, the runtime, the seal, the turn and the
-record-as-a-file (M0 steps 4–9) are **not built**, which is why
-`Airlock.CLI` has no `run` command.
+**M0 is built, and has never run against a real box.** As of 2026-09-03
+this repository holds this brief, `PLAN.md`, `NOTES-M0.md` and an Elixir
+project implementing all nine of M0's steps: the policy parsed, validated
+and compiled onto both layers; the broker with a per-run session and CA;
+the box provisioned, the runtime brought up on placeholders, the box
+**sealed**, one turn driven over ACP, the record printed, the box
+destroyed.
 
-**Read `NOTES-M0.md` before planning further work.** Building steps 1–3
-found two blockers that reorder M0 — the local box cannot be sealed, and
-there is no runner daemon — and corrected several facts in this file. A
-sibling product, goatherd, shares the substrate and has two findings worth
-carrying over; see the next section.
+What is **not** verified is a run: there are no Sprites credentials on this
+machine, so the pipeline is tested against `Managoat.Sandbox.Fake`,
+`Managoat.ACP.Testing.ScriptedAgent` and a real broker with a real origin.
+The seal is genuinely applied and read back; no agent has ever run.
+
+**Read `NOTES-M0.md` before planning further work.** It records two
+blockers that reordered M0 — the local box cannot be sealed, and there is
+no public runner daemon — the decision taken about them (the box is
+Sprites over a tunnel, not the local runner), and eight findings that
+corrected this file. A sibling product, goatherd, shares the substrate and
+has two findings worth carrying over; see the next section.
 
 Carry this rule over from Fountain, it is load-bearing: **never describe
 unbuilt behaviour as existing.** If a document, docstring or README describes
@@ -347,6 +352,19 @@ in goatherd. They are not hypothetical.
   policy locks the box down.
 - The agent a runtime provisions for is a **plain map**, not a struct. Your own
   record satisfies it whatever else it carries.
+- **`Managoat.Sandbox.Fake` raises on any argv but its own** (`out:`,
+  `err:`, `exit:`, `stay`, `drop`) — a `FunctionClauseError`, not a
+  nonzero exit. So it cannot stand in for a box running a real
+  provisioning script, which every real one is (`bash -lc …`).
+  `test/support/fake_box.ex` wraps it.
+- A **runner** sandbox name must be `runner-<32 hex>-<8 hex>`, and which
+  runner a new box lands on is deliberately the host's decision. Mint the
+  name per provider or `create` fails with `:not_a_runner_sandbox_name`.
+- **Provider credentials are application environment, not the shell.**
+  `Managoat.Sandbox.Config.get(Sprites, :token)` reads
+  `:managoat_sandbox`'s config, which `config/runtime.exs` would fill in
+  and an escript never runs. `SPRITES_TOKEN` set in the shell does
+  nothing until something lifts it across; `Airlock.Boot` does.
 
 **ACP**
 
@@ -359,6 +377,14 @@ in goatherd. They are not hypothetical.
   field.
 - Claude emits out-of-turn `session_info_update` notifications that look like
   phantom follow-up turns.
+- **The peer's default permission policy is `auto_allow`.**
+  `Permissions.verdict_for/2` falls back to it and `Peer` starts with
+  `permission_policy: %{}`, so a peer started the obvious way approves
+  every tool call itself and `{:permission_ask, …}` never reaches the
+  owner. Name a policy explicitly for anything unattended.
+- **`Managoat.ACP.Blocks` puts the text in `:body`, not `:text`.** Reading
+  `:text` yields `nil` on every block, which renders as an agent that said
+  nothing.
 
 ## How to work here
 

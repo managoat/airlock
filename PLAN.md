@@ -3,8 +3,8 @@
 Read `CLAUDE.md` first; it is the brief and the boundary. This file is the
 order of work and the acceptance criteria.
 
-M0 steps 1–3 are built as of 2026-09-03 and are marked as such below;
-nothing else is. Each milestone lists what "done" means concretely, because
+M0 is built as of 2026-09-03 and has never run against a real box; the
+milestone notes say what that leaves unproven. Each milestone lists what "done" means concretely, because
 "M1 is finished" is otherwise a matter of opinion. `NOTES-M0.md` records
 what building those three steps found, including two blockers further down
 M0 and several corrections to this file.
@@ -63,14 +63,26 @@ never held a real credential; and the egress log shows at least one `injected`
 row, one `passthrough` row and one `denied` row, each naming the rule that
 decided it.
 
-> **Steps 1–3 are built (2026-09-03). Steps 4–9 are blocked in ways this
-> ordering did not anticipate.** The local box cannot be sealed —
-> `Runner.Adapter.apply_network_policy/2` refuses outright — and there is no
-> runner daemon outside Fountain's private CLI. The egress-log half of "done
-> when" is demonstrated without an agent. **Read `NOTES-M0.md` before
-> continuing;** §1 sets out the options for step 6, and they are a decision
-> rather than a correction. Note also that `passthrough` in that sentence is
-> not the event's `outcome` — §4.
+> **All nine steps are built (2026-09-03), and none has run against a real
+> box.** Two things this ordering did not anticipate reordered it, and the
+> decision is recorded in `NOTES-M0.md` §7:
+>
+> - **the local box cannot be sealed.** `Runner.Adapter.apply_network_policy/2`
+>   refuses outright, so step 1's box is the one box step 6 cannot apply to;
+> - **there is no public runner daemon.** `FakeDaemon` runs nothing and the
+>   real one is Go, in Fountain's private CLI.
+>
+> So step 1 is no longer the local box: **the box is Sprites, reached over a
+> tunnel**, which pulls M3's reachability forward. The local runner is still
+> supported and still cannot be sealed; `airlock run --provider runner`
+> refuses unless given `--unsealed`.
+>
+> What is unproven is the whole of "done when": no agent has run, because
+> there are no Sprites credentials on this machine. The pipeline is tested
+> against `Managoat.Sandbox.Fake` (which does support `:network_policy`, so
+> the seal is real and read back off the box) and
+> `Managoat.ACP.Testing.ScriptedAgent`. Note also that `passthrough` in that
+> sentence is not the event's `outcome` — `NOTES-M0.md` §4.
 
 **Deliberately not measuring cold start.** It stopped being the risk when the
 product stopped being about burst parallelism.
