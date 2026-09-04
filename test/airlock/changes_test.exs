@@ -111,6 +111,14 @@ defmodule Airlock.ChangesTest do
       File.write!(Path.join(dir, ".claude/projects/session.jsonl"), "noise\n")
       File.mkdir_p!(Path.join(dir, "src/node_modules"))
       File.write!(Path.join(dir, "src/node_modules/nested.js"), "noise\n")
+
+      # Files, not directories. The first real run against Sprites got both
+      # of these into the record — `.claude.json` is 950 lines of feature
+      # flags the harness caches on startup — because every pathspec was
+      # `**/X/**`, which silently matches nothing when `X` is a file.
+      File.write!(Path.join(dir, ".claude.json"), "{\"flags\": true}\n")
+      File.write!(Path.join(dir, ".zcompdump-box-5.9"), "noise\n")
+
       File.write!(Path.join(dir, "src/real.js"), "work\n")
 
       assert {:ok, changes} = Changes.since(box, baseline)

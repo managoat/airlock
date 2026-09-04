@@ -15,6 +15,7 @@ M0 left it as a terminal table.
 2. [`Fountain.SandboxFiles` was not extracted, and the diff is not `git diff`](#2-fountainsandboxfiles-was-not-extracted-and-the-diff-is-not-git-diff)
 3. [Smaller findings](#3-smaller-findings)
 4. [Known gaps](#4-known-gaps)
+5. [What two real runs found](#5-what-two-real-runs-found)
 
 ---
 
@@ -190,3 +191,72 @@ never describing unbuilt behaviour as existing.
   `NOTES-M0.md` §9 has the reasoning: the proxy environment is applied to
   the turn, not to provisioning, so a policy does not have to name the npm
   registry to run an agent that never touches npm.
+
+---
+
+## 5. What two real runs found
+
+2026-09-04, Claude on a sealed Sprites box over an `ngrok tcp` tunnel,
+same shape as `NOTES-M0.md` §9. The prompt: fetch `example.com` and write
+its title to `NOTES.md`, write a `fetch.sh`, then try a pastebin URL and
+write down exactly what happened.
+
+Everything worked first time except one thing, and it was the thing only a
+real box could show.
+
+### The exclude list was all directories, and the noise was files
+
+The first record's Changes tab led with **`.claude.json`, +950 lines** —
+the feature flags the harness caches on startup — followed by
+**`.zcompdump`, +2040 lines**, the login shell's completion cache. The two
+files the agent actually wrote were third and fourth, and the record was
+164 KB of which almost all was noise.
+
+The cause is one pathspec short. Every entry in `excludes/0` was rendered
+as `:(exclude,glob)**/X/**`, which matches *the contents of a directory
+named X* and **silently matches nothing when `X` is a file**. Both
+offenders are files. Fixed by emitting two pathspecs per entry — `**/X`
+and `**/X/**` — and by adding the shell and harness state files to the
+list. The second record is 31 KB and its Changes tab is exactly `NOTES.md`
+and `fetch.sh`.
+
+Worth noting the failure mode, because it is the one this whole tab is
+about: nothing errored. The diff was correct, complete and useless.
+
+### git is on the Sprites image, and `bash -lc` finds it
+
+The open question going in — `command -v git` under a non-login shell —
+did not bite, and would not have been silent if it had: the tab says *git
+is not installed on this box* rather than showing an empty diff.
+`Airlock.Changes` runs its scripts under `-lc` for that reason.
+
+### The record, from the second run
+
+Twenty-nine rows: twenty-four `injected`, one `passthrough`, four
+`denied`. The transcript, nine tool calls with real timings, real token
+usage, and two files in the diff. The box was sealed while it worked and
+destroyed after, and `airlock boxes` against the account afterwards
+reports none.
+
+**The four denied rows are two hosts, and only one of them was the
+agent's idea.** Three are `pastebin.com`, which is what the prompt asked
+for. The fourth pair is `http-intake.logs.us5.datadoghq.com` — the
+harness's own telemetry, which no policy named, which nobody asked for,
+and which the agent never mentioned. That is the product's argument in one
+row: the record shows an outbound connection the person running the job
+did not know was being attempted, and a tool running on a laptop has no
+chokepoint to produce it from.
+
+### And the agent read its own containment correctly
+
+Unprompted, from the second run's `NOTES.md`:
+
+> This indicates the outbound request was blocked at the network/proxy
+> level (HTTP 403 on the CONNECT tunnel) rather than pastebin.com itself
+> refusing the request.
+
+M0's run could not tell — it got `Socket is closed` and said so. The
+difference is that this agent wrote a `curl` script and read the tunnel's
+own `403`. Nothing was changed to make that happen and nothing depends on
+it, but it is worth recording that the containment is legible from inside
+as well as outside.

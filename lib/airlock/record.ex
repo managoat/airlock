@@ -347,6 +347,10 @@ defmodule Airlock.Record do
   defp pre_details(_label, nil), do: ""
   defp pre_details(_label, ""), do: ""
 
+  # An adapter that reports no `rawInput` renders it as an empty object.
+  # A disclosure triangle over `{}` is worse than no triangle.
+  defp pre_details(_label, "{}"), do: ""
+
   defp pre_details(label, body),
     do: ~s(<details><summary>#{escape(label)}</summary><pre>#{escape(body)}</pre></details>)
 

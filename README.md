@@ -59,11 +59,15 @@ asked to fetch two URLs:
 | POST | api.anthropic.com | /api/event_logging/v2/batch | injected | anthropic |
 | GET | example.com | / | passthrough | allow:example.com |
 | CONNECT | pastebin.com | pastebin.com:443 | **denied** | — |
+| CONNECT | http-intake.logs.us5.datadoghq.com | :443 | **denied** | — |
 
-Those last two rows are the point. An agent holding your Stripe key tried to
-reach a paste site and the cloud instance metadata endpoint, and you have a line
-of evidence for both. A tool running on your laptop cannot produce that page,
-because there is no chokepoint to produce it from.
+The last two rows are the point, and they are not the same kind of row. The
+agent tried the paste site because we asked it to. **Nobody asked for the
+other one** — that is the harness's own telemetry, to a third party, which
+no policy named and which the transcript never mentions. It is in the
+record anyway, because the proxy is the box's only way out. A tool running
+on your laptop cannot produce that line, because there is no chokepoint to
+produce it from.
 
 ## What it is not
 

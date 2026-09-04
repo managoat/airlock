@@ -116,9 +116,19 @@ defmodule Airlock.Changes do
   # The agent harness's own bookkeeping and the usual build output. See the
   # moduledoc: these change on every turn whatever the prompt was, and the
   # tab says which ones were skipped rather than implying completeness.
+  #
+  # An entry names a **file or a directory**, and may hold a `*`. The first
+  # real run against Sprites is why: the list was all directories, and the
+  # two things that swamped the diff were files — `.claude.json`, 950 lines
+  # of feature flags the harness caches on startup, and `.zcompdump`, the
+  # login shell's completion cache. Between them they buried the two files
+  # the agent actually wrote.
   @excludes ~w(
     .git .ssh .cache .npm .bun .local .config .airlock
     .claude .codex .gemini .opencode
+    .claude.json .codex.json .gemini.json
+    .zcompdump* .zsh_history .zsh_sessions .bash_history .python_history
+    .node_repl_history .lesshst .viminfo .wget-hsts .sudo_as_admin_successful
     node_modules __pycache__ .venv venv .tox
     target dist build .next .nuxt
   )
@@ -191,7 +201,14 @@ defmodule Airlock.Changes do
     Box.exec(box, "bash", ["-lc", script, "airlock-changes" | args], env: env, timeout: @timeout)
   end
 
-  defp pathspecs, do: Enum.map(@excludes, &":(exclude,glob)**/#{&1}/**")
+  # Two per entry, because an entry can be either shape and git's pathspecs
+  # cannot: `**/X` matches the file (or the directory itself) and `**/X/**`
+  # matches what is inside it. `**/X/**` alone silently matches nothing when
+  # `X` is a file, which is how `.claude.json` reached the first real
+  # record.
+  defp pathspecs do
+    Enum.flat_map(@excludes, &[":(exclude,glob)**/#{&1}", ":(exclude,glob)**/#{&1}/**"])
+  end
 
   @doc false
   @spec from_baseline_exec(term(), String.t()) :: {:ok, baseline()} | {:error, error()}
