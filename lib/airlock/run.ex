@@ -29,9 +29,11 @@ defmodule Airlock.Run do
   | 3. provision, unsealed | apt reaches the archives |
   | 4. install the runtime | `npm install -g`, so still before the seal |
   | 5. **seal** | last, and fatal if it fails |
-  | 6. the turn | `Managoat.ACP.Peer` |
-  | 7. the record | transcript and egress rows |
-  | 8. destroy | per-job box, settled question 4 |
+  | 6. the baseline | the starting state the diff is against, so what provisioning wrote is not read as the agent's work |
+  | 7. the turn | `Managoat.ACP.Peer` |
+  | 8. the diff | **before** destroy, because a box destroyed is a box that answers nothing |
+  | 9. the record | transcript, egress rows, tools, changes |
+  | 10. destroy | per-job box, settled question 4 |
 
   Steps 3 and 4 are the ones that must not move. `PLAN.md` says so and
   `Managoat.Runtimes.ACP.install/3`'s own moduledoc says so again from the
@@ -87,6 +89,7 @@ defmodule Airlock.Run do
   alias Airlock.Box
   alias Airlock.Broker
   alias Airlock.Broker.Reachability
+  alias Airlock.Changes
   alias Airlock.Credentials
   alias Airlock.Egress
   alias Airlock.Policy
@@ -108,6 +111,7 @@ defmodule Airlock.Run do
           prompt: String.t(),
           policy: Policy.t(),
           sealed_to: String.t(),
+          changes: {:ok, Changes.t()} | {:error, Changes.error()},
           started_at: DateTime.t(),
           finished_at: DateTime.t()
         }
@@ -241,7 +245,10 @@ defmodule Airlock.Run do
          :ok <- stage(on_stage, "runtime", install),
          {:ok, box} <- seal(box, ctx.policy, ctx.broker_host, on_stage, ctx.opts),
          turn_env = turn_env(ctx, ca_env),
+         baseline = baseline(box, ctx, turn_env, on_stage),
          {:ok, transcript} <- turn(box, ctx.runtime, turn_env, ctx.prompt, ctx.agent, ctx.opts) do
+      changes = changes(box, baseline, ctx, turn_env, on_stage)
+
       {:ok,
        %{
          run: ctx.broker.run,
@@ -257,11 +264,43 @@ defmodule Airlock.Run do
          # rather than off the address that was asked for: `allow` is
          # domains, so the port the caller gave is not in it.
          sealed_to: sealed_to(ctx.policy, ctx.broker_host),
+         changes: changes,
          started_at: ctx.started_at,
          finished_at: DateTime.utc_now()
        }}
     end
   end
+
+  # ── the diff ───────────────────────────────────────────────────────────────
+
+  # Neither of these can fail a run. They are evidence about a run, and a
+  # run whose agent worked and whose diff could not be taken still happened
+  # — so the error travels into the record as the Changes tab's content,
+  # which is the only place a reader can act on it.
+  defp baseline(box, ctx, env, on_stage) do
+    on_stage.("baseline", :started)
+    result = Changes.baseline(box, Runtimes.ACP.cwd(ctx.runtime), env)
+    on_stage.("baseline", stage_status(result))
+    result
+  end
+
+  defp changes(_box, {:error, _reason} = baseline, _ctx, _env, _on_stage), do: baseline
+
+  defp changes(box, {:ok, baseline}, ctx, env, on_stage) do
+    on_stage.("changes", :started)
+
+    # The one secret on the box: the broker's session token is the
+    # authority to use every credential the policy names, and it is in the
+    # turn's environment as half of the proxy URL. Placeholders are not
+    # redacted — a placeholder in the diff is evidence.
+    result = Changes.since(box, baseline, env: env, redact: [ctx.broker.token])
+
+    on_stage.("changes", stage_status(result))
+    result
+  end
+
+  defp stage_status({:ok, _value}), do: :done
+  defp stage_status({:error, reason}), do: {:failed, reason}
 
   # `Compile.network_policy/2`'s allow list is always exactly one host, so
   # this destructures rather than defending: a fallback clause here would

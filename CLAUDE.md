@@ -41,10 +41,17 @@ be the expensive one — no public daemon, and `Runner.Adapter` refuses
 `apply_network_policy/2`, so it can never be sealed. `--provider runner`
 still works and still refuses to run without `--unsealed`.
 
-**Not built:** M1's persistent store and reattach, M2's record-as-a-file
-(the record is a terminal table today), M3's other providers, M4.
+**M2 is done** as of 2026-09-04. The record is a self-contained HTML file
+written beside you at the end of a run, with all four tabs — Transcript,
+Egress, Tools, Changes. `NOTES-M2.md` has what building it found: the
+Tools tab cannot come from `Managoat.ACP.Tracer` (§1), and
+`Fountain.SandboxFiles` was read closely, kept for its shape and
+deliberately **not** extracted (§2).
 
-**Read `NOTES-M0.md` before planning further work.** A sibling product,
+**Not built:** M1's persistent store and reattach, M3's other providers,
+M4.
+
+**Read `NOTES-M0.md` and `NOTES-M2.md` before planning further work.** A sibling product,
 goatherd, shares the substrate and has two findings worth carrying over;
 see the next section.
 
@@ -230,7 +237,7 @@ whole product.
 |---|---|---|
 | Policy: parse, store, compile | ~250 lines | YAML in; `Broker.Rule` structs and a `Sandbox.NetworkPolicy` out. goatherd already parses a YAML herd file, so the parsing half has a pattern to follow. |
 | Broker wiring and a `Store` | ~200 lines | Start the broker beside the app, mint a session per run, hand the box its proxy address and placeholders. `Store.Memory` is the reference implementation. |
-| The record | ~400 lines | A telemetry handler on `[:managoat, :broker, :request]`, storage, and a view with four tabs: Transcript, Egress, Tools, Changes. |
+| The record | ~400 lines | A telemetry handler on `[:managoat, :broker, :request]`, storage, and a view with four tabs: Transcript, Egress, Tools, Changes. **Built** — `Airlock.Egress` and `Airlock.Record`, and it came to about 750 including the diff. |
 | Provisioning with a policy | ~250 lines | A box up with a runtime on it, plus the network policy and the proxy environment. Airlock writes its own — goatherd's `provision.ex` shares roughly 50 lines and, having no policy step, does not encode the ordering that matters here: packages, skills and npm all run *before* the seal. |
 | The thing that drives a turn | ~350 lines | Not goatherd's `driver.ex` — that is deliberately the CLI process, and Airlock has a second consumer and a persisted artefact. |
 
@@ -238,6 +245,18 @@ One deferred extraction: `Fountain.SandboxFiles` (479 lines, Fountain ADR 0039)
 is list / read / `git diff` as fixed scripts over `exec`, path-confined and
 redacted, and it is provider-neutral already. It is the **Changes** tab. Pull it
 out of Fountain into a library when it is needed, not before.
+
+**Read, and not extracted — 2026-09-04.** Its *shape* transferred whole
+(fixed scripts, positional parameters, base64 out, redaction) and its
+*question* did not: Fountain asks what is uncommitted in a long-lived
+clone, and an Airlock box is per-job with no repository on it, so
+`git diff` there answers nothing. `Airlock.Changes` makes the starting
+state — `git init`, commit what provisioning wrote — and diffs the turn
+against it, which is settled question 4's own justification for the
+per-job box. One consumer, one of the three operations, and a bracket
+Fountain has no use for, so extracting now would freeze a shape before it
+has run in anger. **Revisit when** a second consumer wants the pair.
+`NOTES-M2.md` §2.
 
 ## Shape of the codebase
 

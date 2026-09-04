@@ -4,10 +4,12 @@ Read `CLAUDE.md` first; it is the brief and the boundary. This file is the
 order of work and the acceptance criteria.
 
 M0 is **done** as of 2026-09-03 — run for real, against Sprites, with the
-record to show for it. Everything below it is not built. Each milestone lists what "done" means concretely, because
-"M1 is finished" is otherwise a matter of opinion. `NOTES-M0.md` records
-what building those three steps found, including two blockers further down
-M0 and several corrections to this file.
+record to show for it — and **M2 as of 2026-09-04**. M1's first two
+bullets were absorbed into M0; what is left of it, M3 and M4 are not
+built. Each milestone lists what "done" means concretely, because "M1 is
+finished" is otherwise a matter of opinion. `NOTES-M0.md` and
+`NOTES-M2.md` record what building each found, including two blockers
+further down M0 and several corrections to this file.
 
 Two things set this ordering, and both come from `CLAUDE.md`:
 
@@ -122,10 +124,15 @@ costs money and holds a proxy address. An `airlock reap` over
 
 ## M2 — the record
 
-What turns a utility into a product, and **the recommended next milestone**:
-M0 leaves the record as a terminal table that scrolls away, while the whole
-product claim is that you can *hand someone* the record. Most of M1 is
-already done and what remains of it is not on this path.
+**Done, 2026-09-04.** `Airlock.Record` writes one self-contained HTML file
+per run with all four tabs. `NOTES-M2.md` records what building it found —
+in particular that the Tools tab cannot come from `Managoat.ACP.Tracer`
+(§1) and that `Fountain.SandboxFiles` was read, kept for its shape, and
+deliberately not extracted (§2).
+
+What turns a utility into a product: M0 left the record as a terminal table
+that scrolls away, while the whole product claim is that you can *hand
+someone* the record.
 
 Two notes from having built the halves that exist:
 
@@ -137,16 +144,26 @@ Two notes from having built the halves that exist:
   per-job and destroyed at the end of the run, so a Changes tab that reads
   the box afterwards reads nothing.
 
-- Storage for a run: transcript, egress rows, spans, usage.
-- A view with four tabs:
+- ~~Storage for a run: transcript, egress rows, spans, usage.~~ **Done** —
+  and it is the file, not a store. Goatherd's finding holds: there is
+  nothing here that wants a database.
+- A view with four tabs — **all four built**:
   - **Transcript** — `Managoat.ACP.Blocks`, never a runtime dialect.
   - **Egress** — every request: method, host, path, verdict, rule, status,
     latency, error.
-  - **Tools** — spans from `Managoat.ACP.Tracer`, plus normalised token usage
-    from `Managoat.ACP.Usage`.
-  - **Changes** — the diff. This is where `Fountain.SandboxFiles` gets extracted
-    into a library; not before.
-- Export a run as a single file someone else can read.
+  - ~~**Tools** — spans from `Managoat.ACP.Tracer`~~ — **out of date.**
+    `Tracer` emits OpenTelemetry spans and Airlock has no SDK, so wiring it
+    in collects nothing. The calls are derived from the blocks, which
+    thread a call to its result on `toolCallId` by construction, and
+    timed by `Airlock.Transcript`'s own stamp. Normalised token usage from
+    `Managoat.ACP.Usage` is there as written. `NOTES-M2.md` §1.
+  - ~~**Changes** — the diff. This is where `Fountain.SandboxFiles` gets
+    extracted into a library~~ — **it was not extracted, deliberately.**
+    Its shape transferred and its question did not: a per-job box has no
+    repository, so `git diff` answers nothing. `Airlock.Changes` makes the
+    starting state and diffs against it. `NOTES-M2.md` §2.
+- ~~Export a run as a single file someone else can read.~~ **Done** — and
+  it was never a separate bullet from the tabs, as the note below says.
 
 The view is an exported HTML file, not a server — settled question 3. So
 "export a run as a single file someone else can read" is not a separate bullet
@@ -156,6 +173,15 @@ export rather than building a view and an exporter.
 **Done when:** an agent given a scoped API key tries to reach a host the policy
 does not name, and the run record shows the denial, the rule and the moment it
 happened, without you having gone looking for it.
+
+> **Done, 2026-09-04.** A run writes `airlock-<run>.html`; the Egress tab
+> opens on a table whose denied rows are picked out, each naming the rule
+> that decided it, and the header says in one sentence what the box could
+> reach and how many requests carried a credential it never held. Two
+> things the milestone did not ask for and got anyway: the record says what
+> it is **not** showing — an unsealed run, an uncollected diff, a runtime
+> that reported no tokens, the paths the diff skipped — and it fetches
+> nothing, so it reads the same on a machine with no network in six months.
 
 ---
 

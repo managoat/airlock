@@ -12,8 +12,9 @@ M0 left it as a terminal table.
 ## Contents
 
 1. [The Tools tab cannot come from `Managoat.ACP.Tracer`](#1-the-tools-tab-cannot-come-from-managoatacptracer)
-2. [Smaller findings](#2-smaller-findings)
-3. [Known gaps](#3-known-gaps)
+2. [`Fountain.SandboxFiles` was not extracted, and the diff is not `git diff`](#2-fountainsandboxfiles-was-not-extracted-and-the-diff-is-not-git-diff)
+3. [Smaller findings](#3-smaller-findings)
+4. [Known gaps](#4-known-gaps)
 
 ---
 
@@ -57,7 +58,96 @@ not from running it. The tell was in the moduledoc all along.
 blocks path could compute but does not, because nothing has wanted it.
 Not built, and not claimed.
 
-## 2. Smaller findings
+## 2. `Fountain.SandboxFiles` was not extracted, and the diff is not `git diff`
+
+`PLAN.md`: "**Changes** — the diff. This is where `Fountain.SandboxFiles`
+gets extracted into a library; not before." Two things came out of doing
+it, and they are separate decisions.
+
+### The question does not transfer, so the code mostly does not either
+
+`SandboxFiles` is 479 lines doing three operations — list, read, `git
+diff` — and its shape is right: fixed scripts over
+`Managoat.Sandbox.exec/4`, positional parameters so a filename is never
+interpolated into a script, base64 out so bytes survive whatever an
+adapter streams stdout over, path confinement, and redaction on the way
+past. `Airlock.Changes` keeps all of that.
+
+What does not transfer is what it asks. Fountain's sandboxes are
+long-lived and its conversations clone a repository, so "what is
+uncommitted right now" is the whole question. **Airlock's box is per-job
+and starts with no repository at all**, so `git diff` on it answers
+nothing — an agent's output is mostly *new files*, and `git diff` shows
+none of them.
+
+`PLAN.md`'s own settled question 4 says what to do instead, in the
+sentence that justifies the per-job box: *a run's diff is relative to a
+known starting state rather than to whatever the last run left behind.* So
+Airlock **makes** the starting state — `git init` in the workspace if
+there is none, commit what provisioning put there — and diffs against it
+after the turn. `Airlock.Changes.baseline/3` and `since/3`, bracketing the
+turn, both before `Box.destroy/1`.
+
+That bracket is the piece Fountain does not have and would not want.
+
+### Not extracted, deliberately
+
+Being needed is not the whole test for a library; a second consumer and a
+settled API are the rest. This has one consumer, one of the three
+operations, and a step Fountain has no use for. Extracting now would
+freeze a shape before the only product with a policy has ever run it,
+which is the same reasoning that settled `provision.ex` in `PLAN.md`'s
+question 1 — and that one has held up.
+
+**Revisit when** a second consumer wants the *pair*: a known starting
+state and a diff against it. The thing to extract then is the bracket, not
+the diff.
+
+### What the diff leaves out, and why it is printed
+
+A workspace is a **home directory** for claude and codex —
+`Managoat.Runtimes.Layout` puts `cwd` at `/home/sprite` for both — so it
+holds the agent harness's own bookkeeping: session logs, npm's `_logs`,
+caches. Every one of those changes on every turn whatever the prompt was,
+and left in they bury the agent's work.
+
+`Airlock.Changes.excludes/0` is the list, passed to git as
+`:(exclude,glob)**/<name>/**` pathspecs, and the record **prints it in
+the tab**. Taken out silently, the record would claim a completeness it
+does not have.
+
+### The one secret on the box is the session token
+
+The box holds placeholders, not credentials — so there is almost nothing
+to redact from a diff, which is the product working. The exception is the
+**proxy URL**: it carries the broker's session token, which is the
+authority to use every credential the policy names, and it is in the
+turn's environment. An agent that wrote its environment to a file would
+put it in the diff. `Airlock.Run` passes the token to `since/3`'s
+`:redact`.
+
+Placeholders are deliberately not redacted. A placeholder in the diff is
+evidence the containment worked.
+
+### `Airlock.Test.LocalBox`, and why a fake was not enough
+
+`Managoat.Sandbox.Fake` answers every unrecognised argv, and
+`Airlock.Test.FakeBox` makes that exit 0 with empty output. Three bash
+scripts and two `-z` parsers all pass against that, and every one of them
+can still be wrong: a pathspec that excludes nothing, a record shape that
+is not what git emits, a pipeline whose exit status is `base64`'s rather
+than `git`'s.
+
+So `test/support/local_box.ex` runs the argv with `System.cmd/3` against a
+temporary directory, and `changes_test.exs` asserts on the git that is
+installed rather than on a memory of its output. It is test support and
+not a sandbox — there is no isolation in it whatsoever.
+
+Related, and worth keeping: `from_baseline_exec({:ok, "", 0})` is an
+**error**, not an empty result. A box that answers every command with exit
+0 must not look like an agent that changed nothing.
+
+## 3. Smaller findings
 
 - **A run of `:text` blocks is a message; every `:text` block in a turn is
   not.** `Managoat.ACP.Blocks` says a renderer concatenates adjacent
@@ -75,12 +165,21 @@ Not built, and not claimed.
   happy and the error path, so anything the record wants off the box has
   to be collected *before* `Box.destroy/1`. That is why the Changes tab is
   a stage in the run rather than a step in the writer.
+- **The baseline commits into a repository that is already there**, if
+  ever there is one. Airlock never clones, so today the workspace has no
+  repository until `baseline/3` makes one — but an M3 policy with a
+  `repo:` key would change that, and the baseline would then add a commit
+  to the user's history. Worth deciding before that key exists.
 
-## 3. Known gaps
+## 4. Known gaps
 
 Recorded here rather than in a docstring, per `CLAUDE.md`'s rule about
 never describing unbuilt behaviour as existing.
 
+- **The diff is not taken when the turn fails.** It could be — the box is
+  still there — but a failed run writes no record at all, so there is
+  nowhere to put it. The two gaps are one gap and this is the smaller
+  half.
 - **A failed run writes no record.** `Airlock.Run.start/1` returns
   `{:error, reason}` and the egress rows collected up to that point are
   dropped. That is backwards for a containment product: a run that failed

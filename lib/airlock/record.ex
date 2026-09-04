@@ -32,8 +32,9 @@ defmodule Airlock.Record do
       and the rule that decided it. `Airlock.Egress.rows/1`;
     * **Tools** — every tool call the agent made, paired with its result,
       how long it took, and what the turn cost in tokens;
-    * **Changes** — the diff. *Not yet built*; it arrives with
-      `Airlock.Changes` and the panel says so rather than being absent.
+    * **Changes** — what the agent left behind: the files it touched and
+      the patch, taken against the state the box was in when the turn
+      started. `Airlock.Changes`.
 
   **No credential is ever rendered**, and the reason it is safe to say that
   flatly is structural rather than careful: `Airlock.Policy` holds
@@ -81,7 +82,7 @@ defmodule Airlock.Record do
           optional(:sealed_to) => String.t(),
           optional(:started_at) => DateTime.t(),
           optional(:finished_at) => DateTime.t(),
-          optional(:changes) => term()
+          optional(:changes) => {:ok, map()} | {:error, term()}
         }
 
   @doc """
@@ -245,6 +246,8 @@ defmodule Airlock.Record do
   # placeholder.
   defp badge("egress", result), do: count_badge(length(result.egress))
   defp badge("tools", result), do: count_badge(length(Transcript.tool_calls(result.transcript)))
+
+  defp badge("changes", %{changes: {:ok, %{files: files}}}), do: count_badge(length(files))
   defp badge(_id, _result), do: ""
 
   defp count_badge(0), do: ""
@@ -521,24 +524,125 @@ defmodule Airlock.Record do
 
   # ── changes ────────────────────────────────────────────────────────────────
 
+  defp changes_panel(%{changes: {:ok, changes}}), do: changed(changes)
+  defp changes_panel(%{changes: {:error, reason}}), do: no_changes(reason)
+
+  # A run from before the Changes stage existed, or one whose result was
+  # assembled by something that does not collect it. Not the same as a run
+  # that changed nothing, and it does not say so.
   defp changes_panel(_result) do
-    not_built(
-      "Changes",
-      "The diff: what the agent left behind on the box, taken before the box was destroyed.",
-      "M2 step 3"
+    ~s(<div class="unbuilt"><p>No diff was collected for this run.</p></div>)
+  end
+
+  defp changed(%{files: []} = changes) do
+    ~s(<div class="unbuilt"><p>The agent left the workspace as it found it: ) <>
+      ~s(no file under <code>#{escape(changes.cwd)}</code> changed.</p></div>) <>
+      excluded(changes)
+  end
+
+  defp changed(changes) do
+    """
+    <p class="note">Everything that changed under <code>#{escape(changes.cwd)}</code> while the
+    agent worked, against the state the box was in when the turn started. The box is per-job and
+    was destroyed after, so this is the whole of what it did to disk.</p>
+    <div class="scroll"><table class="egress">
+      <thead><tr><th>Status</th><th>File</th><th class="num">+</th><th class="num">−</th></tr></thead>
+      <tbody>#{Enum.map_join(changes.files, "\n", &file_row/1)}</tbody>
+    </table></div>
+    #{patch(changes)}
+    #{excluded(changes)}
+    """
+  end
+
+  defp file_row(file) do
+    """
+    <tr class="v-#{file_class(file.status)}">
+      <td><span class="verdict #{file_class(file.status)}">#{escape(file.status)}</span></td>
+      <td class="path">#{escape(file.path)}</td>
+      <td class="num add">#{escape(lines(file.added))}</td>
+      <td class="num del">#{escape(lines(file.removed))}</td>
+    </tr>
+    """
+  end
+
+  defp file_class("added"), do: "passthrough"
+  defp file_class("deleted"), do: "denied"
+  defp file_class(_status), do: "injected"
+
+  # `nil` is git for a binary file, which is not the same as zero lines.
+  defp lines(nil), do: "bin"
+  defp lines(0), do: "·"
+  defp lines(n), do: to_string(n)
+
+  defp patch(%{diff: ""}), do: ""
+
+  defp patch(changes) do
+    note =
+      if changes.truncated do
+        ~s(<p class="note">The patch was capped and is cut off here. The file list above is not ) <>
+          ~s(capped, so nothing that changed is missing from it.</p>)
+      else
+        ""
+      end
+
+    ~s(<details class="policy" open><summary>The patch</summary>) <>
+      note <> ~s(<pre class="patch">#{escape(changes.diff)}</pre></details>)
+  end
+
+  defp excluded(%{excluded: []}), do: ""
+
+  defp excluded(%{excluded: excluded}) do
+    ~s(<p class="note">Not looked at, because a workspace is a home directory and these ) <>
+      ~s(change on every turn whatever the prompt was: ) <>
+      Enum.map_join(excluded, ", ", &"<code>#{escape(&1)}</code>") <> ".</p>"
+  end
+
+  # Every one of these is a fact about the run rather than a bug in the
+  # record, so each says which — an empty tab would say the agent changed
+  # nothing, and that is a different claim.
+  defp no_changes(:git_unavailable) do
+    unavailable(
+      "git is not installed on this box, so no diff could be taken.",
+      "Airlock takes the diff with git: it commits the workspace before the turn and " <>
+        "diffs against that commit after. Without git there is no way to say what changed."
     )
   end
 
-  # `CLAUDE.md`: never describe unbuilt behaviour as existing. A tab that
-  # is empty because nothing was collected and a tab that is empty because
-  # it was never built look identical, and only one of them is a bug.
-  defp not_built(name, description, milestone) do
+  defp no_changes(:workspace_missing) do
+    unavailable(
+      "The runtime's workspace did not exist on the box.",
+      "Nothing was there to diff, which usually means provisioning did not get as far as " <>
+        "it reported."
+    )
+  end
+
+  defp no_changes(:not_a_repository) do
+    unavailable(
+      "The workspace held no repository when the diff was taken.",
+      "The baseline commit is what makes one, so this means it was lost between the " <>
+        "baseline and the turn's end."
+    )
+  end
+
+  defp no_changes({:git_failed, output}) do
+    unavailable("git failed while taking the diff.", output)
+  end
+
+  defp no_changes({:box, reason}) do
+    unavailable("The box could not be reached to take the diff.", inspect(reason))
+  end
+
+  defp no_changes(reason) do
+    unavailable("No diff could be taken.", inspect(reason))
+  end
+
+  defp unavailable(headline, detail) do
     """
     <div class="unbuilt">
-      <h2>#{escape(name)}</h2>
-      <p><strong>Not yet built.</strong> #{escape(description)}</p>
-      <p class="note">This panel is a placeholder, not an empty result: nothing was collected
-      for it, so its being blank says nothing about the run. #{escape(milestone)}.</p>
+      <h2>No diff</h2>
+      <p><strong>#{escape(headline)}</strong></p>
+      <p class="note">#{escape(detail)}</p>
+      <p class="note">This is not the same as an agent that changed nothing; that case says so.</p>
     </div>
     """
   end
@@ -735,6 +839,9 @@ defmodule Airlock.Record do
     .verdict.denied { color: var(--bad); }
     .verdict.malformed { color: var(--warn); }
     dl.usage { margin: 0 0 1.25rem; }
+    td.add { color: var(--ok); } td.del { color: var(--bad); }
+    pre.patch { font-size: .78rem; white-space: pre; overflow-x: auto; max-height: 40rem;
+                overflow-y: auto; }
     tr.v-denied { background: color-mix(in srgb, var(--bad) 7%, transparent); }
     .scheme, .from, .err { font-size: .74rem; color: var(--dim); }
     .err { color: var(--bad); }

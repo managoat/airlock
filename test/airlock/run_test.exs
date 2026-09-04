@@ -95,7 +95,20 @@ defmodule Airlock.RunTest do
       # it is real, and the order is what is under test.
       assert {:error, _turn} = run(policy, stages: self())
 
-      assert stages() == ["create", "packages", "trust", "runtime", "seal", "turn", "destroy"]
+      # `baseline` is between the seal and the turn: it is the state the
+      # diff is against, so everything provisioning wrote has to be in it
+      # rather than reading as the agent's work. `changes` is not here
+      # because the turn failed, and a fake box has no diff to take.
+      assert stages() == [
+               "create",
+               "packages",
+               "trust",
+               "runtime",
+               "seal",
+               "baseline",
+               "turn",
+               "destroy"
+             ]
     end
 
     test "the box is destroyed even when the turn fails", %{policy: policy} do

@@ -172,14 +172,80 @@ defmodule Airlock.RecordTest do
       assert html =~ "Unmatched hosts: <strong>deny</strong>"
     end
 
-    test "an unbuilt tab says it is unbuilt rather than looking empty", %{policy: policy} do
-      # `CLAUDE.md`: never describe unbuilt behaviour as existing. A tab
-      # empty because nothing was collected and a tab empty because it was
-      # never built look identical, and only one of them is a bug.
-      html = Record.html(result(policy))
+    test "a run with no diff collected says that, not that nothing changed", %{policy: policy} do
+      # An empty tab and an uncollected one look identical, and only one of
+      # them is a claim about the agent. This is the uncollected case: a
+      # result assembled without the Changes stage.
+      changes = policy |> result() |> Record.html() |> panel("changes")
 
-      assert html =~ "M2 step 3"
-      assert html =~ "Not yet built"
+      assert changes =~ "No diff was collected"
+      refute changes =~ "left the workspace as it found it"
+    end
+
+    test "a failed diff names why, and says it is not an agent that changed nothing", %{
+      policy: policy
+    } do
+      changes =
+        policy
+        |> result(changes: {:error, :git_unavailable})
+        |> Record.html()
+        |> panel("changes")
+
+      assert changes =~ "git is not installed on this box"
+      assert changes =~ "not the same as an agent that changed nothing"
+    end
+
+    test "the changes tab lists the files, the counts and the patch", %{policy: policy} do
+      changes =
+        policy
+        |> result(
+          changes:
+            {:ok,
+             %{
+               cwd: "/home/sprite",
+               files: [
+                 %{path: "answer.txt", status: "added", added: 3, removed: 0},
+                 %{path: "old.txt", status: "deleted", added: 0, removed: 9},
+                 %{path: "logo.png", status: "modified", added: nil, removed: nil}
+               ],
+               diff: "diff --git a/answer.txt b/answer.txt\n+42\n",
+               truncated: false,
+               excluded: ["node_modules", ".claude"]
+             }}
+        )
+        |> Record.html()
+        |> panel("changes")
+
+      assert changes =~ "answer.txt"
+      assert changes =~ ~s(<span class="verdict passthrough">added</span>)
+      assert changes =~ ~s(<span class="verdict denied">deleted</span>)
+      # `nil` is git for a binary file, which is not zero lines.
+      assert changes =~ "bin"
+      assert changes =~ "diff --git"
+      assert changes =~ "node_modules"
+    end
+
+    test "a run that changed nothing says so, and still says what it did not look at", %{
+      policy: policy
+    } do
+      changes =
+        policy
+        |> result(
+          changes:
+            {:ok,
+             %{
+               cwd: "/home/sprite",
+               files: [],
+               diff: "",
+               truncated: false,
+               excluded: ["node_modules"]
+             }}
+        )
+        |> Record.html()
+        |> panel("changes")
+
+      assert changes =~ "left the workspace as it found it"
+      assert changes =~ "node_modules"
     end
 
     test "a tool call carries its result and its status", %{policy: policy} do

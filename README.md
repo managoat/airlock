@@ -3,14 +3,16 @@
 Run a coding agent on a machine you chose, with credentials that machine never
 holds, and get a record of everything it did.
 
-> **Status: M0 done.** A real Claude agent has run on a sealed cloud box
+> **Status: M0 and M2 done.** A real Claude agent has run on a sealed cloud box
 > holding a placeholder where the API token should be, fetched a host the
 > policy allowed, been refused one it did not, and the box was destroyed
 > after. The table below is from that run, not a mock-up.
 >
-> **Not built:** the record's Changes tab (M2, in progress), sessions do
-> not survive the client going away (M1), and Sprites is the only cloud
-> provider wired up (M3).
+> The record is a self-contained HTML file with all four tabs — Transcript,
+> Egress, Tools, Changes — written beside you at the end of the run.
+>
+> **Not built:** sessions do not survive the client going away (M1), and
+> Sprites is the only cloud provider wired up (M3).
 >
 > The brief is [CLAUDE.md](CLAUDE.md), the plan is [PLAN.md](PLAN.md), and
 > [NOTES-M0.md](NOTES-M0.md) and [NOTES-M2.md](NOTES-M2.md) record what
