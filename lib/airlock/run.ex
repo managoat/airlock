@@ -89,6 +89,8 @@ defmodule Airlock.Run do
   alias Airlock.Broker.Reachability
   alias Airlock.Credentials
   alias Airlock.Egress
+  alias Airlock.Policy
+  alias Airlock.Policy.Compile
   alias Airlock.Runtime
   alias Airlock.Transcript
   alias Managoat.ACP.Peer
@@ -100,7 +102,14 @@ defmodule Airlock.Run do
           transcript: Transcript.t(),
           egress: [map()],
           box: String.t(),
-          sealed?: boolean()
+          sealed?: boolean(),
+          provider: atom(),
+          runtime: String.t(),
+          prompt: String.t(),
+          policy: Policy.t(),
+          sealed_to: String.t(),
+          started_at: DateTime.t(),
+          finished_at: DateTime.t()
         }
 
   @default_timeout 600_000
@@ -177,6 +186,7 @@ defmodule Airlock.Run do
   defp provision_and_run(broker, broker_host, policy, prompt, runtime, provider, opts) do
     agent = Keyword.get(opts, :agent, %{}) |> Map.put(:runtime, runtime)
     on_stage = Keyword.get(opts, :on_stage, fn _stage, _status -> :ok end)
+    started_at = DateTime.utc_now()
 
     # Two environments, deliberately. Provisioning gets the placeholders
     # and the runtime's own variables but **not** the proxy; the turn gets
@@ -200,6 +210,8 @@ defmodule Airlock.Run do
           prompt: prompt,
           runtime: runtime,
           runtime_mod: runtime_mod,
+          provider: provider,
+          started_at: started_at,
           agent: agent,
           provision_env: provision_env,
           proxy: proxy,
@@ -236,9 +248,27 @@ defmodule Airlock.Run do
          transcript: transcript,
          egress: Egress.rows(ctx.broker.run),
          box: box.name,
-         sealed?: box.sealed?
+         sealed?: box.sealed?,
+         provider: ctx.provider,
+         runtime: ctx.runtime,
+         prompt: ctx.prompt,
+         policy: ctx.policy,
+         # What the seal actually named, read off the compiled policy
+         # rather than off the address that was asked for: `allow` is
+         # domains, so the port the caller gave is not in it.
+         sealed_to: sealed_to(ctx.policy, ctx.broker_host),
+         started_at: ctx.started_at,
+         finished_at: DateTime.utc_now()
        }}
     end
+  end
+
+  # `Compile.network_policy/2`'s allow list is always exactly one host, so
+  # this destructures rather than defending: a fallback clause here would
+  # be dead code claiming to handle a shape the compiler cannot produce.
+  defp sealed_to(policy, broker_host) do
+    %{allow: [host | _]} = Compile.network_policy(policy, broker_host)
+    host
   end
 
   # What the agent runs with: the proxy, the trust store the broker's own

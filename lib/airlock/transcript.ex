@@ -84,18 +84,40 @@ defmodule Airlock.Transcript do
     do: Enum.filter(blocks, &(Map.get(&1, :kind) == kind))
 
   @doc """
-  The agent's assistant text, concatenated — adjacent chunks are one
-  message, which is what `Managoat.ACP.Blocks` says a renderer does.
+  The agent's assistant text as messages: one string per run of adjacent
+  `:text` blocks.
+
+  **Adjacent** is the whole of it. `Managoat.ACP.Blocks` emits one block
+  per `agent_message_chunk` and says a renderer concatenates adjacent ones,
+  because a chunk is a fragment of a message and not a message. What it
+  does not say is that *every* `:text` block in a turn is one message — a
+  tool call between two of them ends the first and starts the second, and
+  joining those with nothing runs two sentences together:
+
+      ...I have fetched it now.You denied the second request...
+
+  Which is what M0's records did. So a run of text blocks is a message, and
+  anything else — a tool call, a result, a thought — ends it.
 
   The text lives under `:body`, not `:text`: `:kind` names what the block
   is and `:body` carries it, for every block shape. Reading `:text` gets
   `nil` on every block and concatenates to `""`, which looks exactly like
   an agent that said nothing.
   """
-  @spec text(t()) :: String.t()
-  def text(%__MODULE__{} = transcript) do
-    transcript
-    |> of_kind(:text)
-    |> Enum.map_join("", &(Map.get(&1, :body) || ""))
+  @spec messages(t()) :: [String.t()]
+  def messages(%__MODULE__{blocks: blocks}) do
+    blocks
+    |> Enum.chunk_by(&(Map.get(&1, :kind) == :text))
+    |> Enum.filter(&match?([%{kind: :text} | _], &1))
+    |> Enum.map(fn run -> Enum.map_join(run, "", &(Map.get(&1, :body) || "")) end)
+    |> Enum.reject(&(&1 == ""))
   end
+
+  @doc """
+  The agent's assistant text, messages separated by a blank line.
+
+  See `messages/1` for why the separator is not nothing.
+  """
+  @spec text(t()) :: String.t()
+  def text(%__MODULE__{} = transcript), do: transcript |> messages() |> Enum.join("\n\n")
 end

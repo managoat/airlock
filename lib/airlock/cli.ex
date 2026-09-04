@@ -18,6 +18,17 @@ defmodule Airlock.CLI do
                                              to ask means every request is
                                              denied and recorded
     --unsealed                               proceed on a box that cannot be sealed
+    --record <path>                          where the record file lands
+                                             (default airlock-<run>.html)
+    --no-record                              print the record and write no file
+
+  ## The record is a file
+
+  A run writes `airlock-<run>.html` beside you: one self-contained page with
+  the transcript, every request the proxy decided about, and the policy that
+  decided them. That is the product claim — you can hand someone the record —
+  and `Airlock.Record` is where it is written. The terminal summary is still
+  printed, because a summary you have to open a browser for is not one.
 
   ## `--broker-host` is required for a cloud box, and there is no default
 
@@ -42,6 +53,7 @@ defmodule Airlock.CLI do
   alias Airlock.Credentials
   alias Airlock.Egress
   alias Airlock.Policy
+  alias Airlock.Record
   alias Airlock.Render
   alias Airlock.Run
 
@@ -106,16 +118,38 @@ defmodule Airlock.CLI do
       started =
         Run.start(
           [policy: policy, prompt: prompt, on_stage: &Render.stage/2] ++
-            Keyword.delete(opts, :broker_host) ++ broker_host_opt(broker_host)
+            Keyword.drop(opts, [:broker_host, :record]) ++ broker_host_opt(broker_host)
         )
 
       case started do
-        {:ok, result} -> out(Render.record(result))
-        {:error, reason} -> die(Render.run_error(reason, path))
+        {:ok, result} ->
+          out(Render.record(result))
+          write_record(Map.put(result, :policy_path, path), opts[:record])
+
+        {:error, reason} ->
+          die(Render.run_error(reason, path))
       end
     else
       {:error, reason} -> die(Render.error(reason, path))
     end
+  end
+
+  # The record is the product, so a run that cannot write it says so
+  # loudly — but it says so *after* the terminal summary, because the run
+  # itself succeeded and the rows are the evidence. A failed write is not
+  # a failed run and must not read as one.
+  defp write_record(_result, :none), do: :ok
+
+  defp write_record(result, path) do
+    case Record.write(result, path: path) do
+      {:ok, written} -> IO.puts(:stderr, "record  #{written}")
+      {:error, {:record_unwritable, where, reason}} -> warn(unwritable(where, reason))
+    end
+  end
+
+  defp unwritable(path, reason) do
+    "airlock: the run finished, but its record could not be written to #{path}: " <>
+      "#{:file.format_error(reason)}. The summary above is all of it."
   end
 
   defp broker_host_opt(nil), do: []
@@ -139,7 +173,9 @@ defmodule Airlock.CLI do
     broker_port: :integer,
     timeout: :integer,
     permissions: :string,
-    unsealed: :boolean
+    unsealed: :boolean,
+    record: :string,
+    no_record: :boolean
   ]
 
   @providers ~w(sprites e2b daytona runner)
@@ -182,8 +218,15 @@ defmodule Airlock.CLI do
       # needs the listener bound somewhere known rather than wherever the
       # OS put it.
       broker_port: Keyword.get(parsed, :broker_port, 0),
-      broker_host: Keyword.get(parsed, :broker_host)
+      broker_host: Keyword.get(parsed, :broker_host),
+      # `nil` means "the default path", so "no file at all" needs a value
+      # of its own rather than the absence of one.
+      record: record_path(parsed)
     ]
+  end
+
+  defp record_path(parsed) do
+    if Keyword.get(parsed, :no_record, false), do: :none, else: Keyword.get(parsed, :record)
   end
 
   defp warn(nil), do: :ok

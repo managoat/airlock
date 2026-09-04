@@ -8,9 +8,9 @@ holds, and get a record of everything it did.
 > policy allowed, been refused one it did not, and the box was destroyed
 > after. The table below is from that run, not a mock-up.
 >
-> **Not built:** the record is a terminal table rather than the exportable
-> HTML file it will be (M2), sessions do not survive the client going away
-> (M1), and Sprites is the only cloud provider wired up (M3).
+> **Not built:** the record's Tools and Changes tabs (M2, in progress),
+> sessions do not survive the client going away (M1), and Sprites is the
+> only cloud provider wired up (M3).
 >
 > The brief is [CLAUDE.md](CLAUDE.md), the plan is [PLAN.md](PLAN.md), and
 > [NOTES-M0.md](NOTES-M0.md) records what building it found.
@@ -44,8 +44,11 @@ work. The agent sees placeholders where your keys should be. The real
 credentials are attached at a proxy that is the box's only way out, so a
 placeholder lifted off the disk is worth nothing anywhere else.
 
-Then you get the record. This is a real run, reformatted — Claude on a
-sealed Sprites box, asked to fetch two URLs:
+Then you get the record: one self-contained HTML file per run, written
+beside you, with the transcript and every request the proxy decided about.
+No server, nothing to fetch, nothing to sign in to — you hand someone the
+file. This is a real run, reformatted — Claude on a sealed Sprites box,
+asked to fetch two URLs:
 
 | Method | Host | Path | Verdict | Rule |
 |---|---|---|---|---|
@@ -89,6 +92,9 @@ ngrok tcp 14322                               # a raw TCP tunnel, not an HTTP on
 ./airlock run policy.yaml "fix the failing test" \
   --broker-host 4.tcp.ngrok.io:19482
 ```
+
+The run prints a summary and writes `airlock-<run>.html` beside you. That
+file is the record: open it, or send it to someone who was not there.
 
 The broker is a listener the box dials *out* to, so it needs an address on
 the box's network. An HTTP reverse proxy will not do — the proxy protocol
