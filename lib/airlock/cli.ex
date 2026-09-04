@@ -121,6 +121,17 @@ defmodule Airlock.CLI do
   defp broker_host_opt(nil), do: []
   defp broker_host_opt(host), do: [broker_host: host]
 
+  @doc """
+  Parse `run`'s flags into the options `Airlock.Run.start/1` takes.
+
+  Public because the alternative is untestable: every error path in the
+  command itself ends at `die/1`, which halts the VM, so a test that drove
+  `main/1` would take ExUnit down with it. The parsing is where the
+  branches are; the command around it is three lines.
+  """
+  @spec parse_flags([String.t()]) :: {:ok, keyword()} | {:error, term()}
+  def parse_flags(flags)
+
   @flags [
     runtime: :string,
     provider: :string,
@@ -134,7 +145,7 @@ defmodule Airlock.CLI do
   @providers ~w(sprites e2b daytona runner)
   @verdicts ~w(ask auto_allow auto_deny)
 
-  defp parse_flags(flags) do
+  def parse_flags(flags) do
     {parsed, rest, invalid} = OptionParser.parse(flags, strict: @flags)
 
     cond do

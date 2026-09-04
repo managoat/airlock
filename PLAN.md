@@ -88,11 +88,18 @@ product stopped being about burst parallelism.
 
 ## M1 — the policy is a real object
 
-- The policy file format below: parsed, validated, compiled to `Broker.Rule`
-  structs and a `Sandbox.NetworkPolicy`.
-- Validation that catches the mistakes that would otherwise be silent: a host in
-  `credentials` that is not in `allow` can never match, and should be an error
-  rather than a dead rule.
+> **Half of this was absorbed into M0** (2026-09-03), which needed a real
+> policy object to seal a box with. What is left is the durability pair:
+> a store that outlives a process, and reattach. Ticked below.
+
+- ~~The policy file format below: parsed, validated, compiled to `Broker.Rule`
+  structs and a `Sandbox.NetworkPolicy`.~~ **Done in M0** — `Airlock.Policy`
+  and `Airlock.Policy.Compile`.
+- ~~Validation that catches the mistakes that would otherwise be silent: a host
+  in `credentials` that is not in `allow` can never match, and should be an
+  error rather than a dead rule.~~ **Done in M0**, along with several more the
+  parser refuses: an unknown key at either level, a placeholder the broker
+  would reject, a `:basic` credential with no username.
 - A `Broker.Store` that outlives one process, so a run's proxy session survives
   the thing that started it.
 - Reattach: `Sandbox.attach/3` replays from byte zero, so de-duplicate by
@@ -101,13 +108,34 @@ product stopped being about burst parallelism.
 
 **Done when:** the same policy file, checked into a repository, produces the
 same containment on two different machines, and a run survives the client going
-away and coming back.
+away and coming back. The first half holds already; the second is the whole of
+what is left.
+
+Worth doing alongside, because it is the same concern and it is cheap: a
+killed CLI orphans its box. `Airlock.Run` destroys on both the happy and the
+error paths — verified across four real runs, three of them failures, with
+nothing left behind — but a `SIGINT` skips it, and an orphaned Sprites box
+costs money and holds a proxy address. An `airlock reap` over
+`Sandbox.list_all_names/1` filtering `airlock-*` is the cheap version.
 
 ---
 
 ## M2 — the record
 
-What turns a utility into a product.
+What turns a utility into a product, and **the recommended next milestone**:
+M0 leaves the record as a terminal table that scrolls away, while the whole
+product claim is that you can *hand someone* the record. Most of M1 is
+already done and what remains of it is not on this path.
+
+Two notes from having built the halves that exist:
+
+- **the transcript and the egress rows are already in memory** at the end of
+  a run (`Airlock.Transcript`, `Airlock.Egress.rows/1`), so the export is
+  the cheapest large win here. `Airlock.Render` already separates the row
+  shape from the drawing, which is the seam this needs;
+- **the diff has to be taken before `Airlock.Box.destroy/1`.** A box is
+  per-job and destroyed at the end of the run, so a Changes tab that reads
+  the box afterwards reads nothing.
 
 - Storage for a run: transcript, egress rows, spans, usage.
 - A view with four tabs:
