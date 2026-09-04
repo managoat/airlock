@@ -14,6 +14,7 @@ defmodule Airlock.Boot do
   """
 
   alias Airlock.Box.Host
+  alias Airlock.Credentials
 
   @applications [:logger, :crypto, :ssl, :telemetry, :yaml_elixir, :bandit]
 
@@ -25,8 +26,6 @@ defmodule Airlock.Boot do
   # the variable is plainly set — the most confusing shape of wrong
   # available here.
   @provider_credentials [
-    {Managoat.Sandbox.Sprites, :token, "SPRITES_TOKEN"},
-    {Managoat.Sandbox.Sprites, :base_url, "SPRITES_BASE_URL"},
     {Managoat.Sandbox.E2B, :api_key, "E2B_API_KEY"},
     {Managoat.Sandbox.Daytona, :api_key, "DAYTONA_API_KEY"}
   ]
@@ -61,11 +60,29 @@ defmodule Airlock.Boot do
     for {scope, key, var} <- @provider_credentials,
         value = System.get_env(var),
         is_binary(value) and value != "" do
-      settings = Application.get_env(:managoat_sandbox, scope, [])
-      Application.put_env(:managoat_sandbox, scope, Keyword.put(settings, key, value))
+      put(scope, key, value)
     end
 
+    configure_sprites()
     :ok
+  end
+
+  # Sprites is the one provider whose credential is *found* rather than
+  # configured: `Airlock.Credentials` reads `SPRITES_TOKEN` and falls back
+  # to the CLI's own store, so a machine that has run `sprite login` needs
+  # nothing exported. The base URL follows the CLI's current selection.
+  defp configure_sprites do
+    case Credentials.sprites_token() do
+      {:ok, token, _source} -> put(Managoat.Sandbox.Sprites, :token, token)
+      {:error, _reason} -> :ok
+    end
+
+    put(Managoat.Sandbox.Sprites, :base_url, Credentials.sprites_base_url())
+  end
+
+  defp put(scope, key, value) do
+    settings = Application.get_env(:managoat_sandbox, scope, [])
+    Application.put_env(:managoat_sandbox, scope, Keyword.put(settings, key, value))
   end
 
   # The registry a local box registers in. Started here rather than left to

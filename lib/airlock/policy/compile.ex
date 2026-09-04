@@ -148,34 +148,6 @@ defmodule Airlock.Policy.Compile do
         do: {name, placeholder}
   end
 
-  @doc """
-  Each rule's name to its scheme, without resolving a credential.
-
-  `Airlock.Egress` needs this to render a verdict, and the reason is a
-  sharp edge in the library that reads backwards.
-
-  The request event's `outcome` is `:injected` whenever **a rule matched**
-  and `:passthrough` only when **none did** and the session let the request
-  through anyway — so `:passthrough` is reachable only under
-  `unmatched_host_policy: :passthrough`. Under `:deny`, which is the whole
-  of Airlock's stance, every request that is not denied reports
-  `:injected`, including one that matched a `:passthrough` rule and had
-  nothing attached to it at all.
-
-  The event carries the rule's *name* but not its scheme, and this compiler
-  is what named the rules, so this is where the two can be put back
-  together. `Airlock.Egress` uses it to say `passthrough` for a request
-  that was let through untouched — which is what the reader of a record
-  needs to be told, and what the raw `outcome` would get wrong.
-  """
-  @spec rule_schemes(Policy.t()) :: %{optional(String.t()) => Managoat.Broker.Rule.scheme()}
-  def rule_schemes(%Policy{} = policy) do
-    from_credentials = for c <- policy.credentials, into: %{}, do: {c.name, c.scheme}
-    from_allow = for host <- policy.allow, into: %{}, do: {"allow:#{host}", :passthrough}
-
-    Map.merge(from_allow, from_credentials)
-  end
-
   # ── one rule ───────────────────────────────────────────────────────────────
 
   defp rule(%Credential{scheme: :passthrough} = credential, _vars) do

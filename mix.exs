@@ -49,8 +49,11 @@ defmodule Airlock.MixProject do
       # trivially reachable from the box. 0.2.1.
       {:managoat_runner, "~> 0.2.1"},
       # The egress credential proxy and the per-request telemetry event.
-      # Four minors past what CLAUDE.md records; see NOTES-M0.md.
-      {:managoat_broker, "~> 0.8.0"},
+      # 0.11.0 carries `scheme` on the request event — managoat_broker#27,
+      # filed from building the record here — which is what lets a
+      # passthrough row be told from an injected one. `~> 0.11` is
+      # required, not preferred: 0.10 and earlier cannot say.
+      {:managoat_broker, "~> 0.11.0"},
       # Gets claude, codex, gemini or opencode onto a box and up on ACP.
       # `~> 0.3` is required, not preferred: 0.2.x has no optional-callback
       # dispatchers, and writing the `function_exported?/3` guard against

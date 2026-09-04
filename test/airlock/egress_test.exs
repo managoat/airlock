@@ -18,11 +18,7 @@ defmodule Airlock.EgressTest do
   setup context do
     run = "test-#{:erlang.phash2(context.test)}"
 
-    {:ok, _pid} =
-      Egress.start_link(
-        run: run,
-        schemes: %{"stripe" => :bearer, "anthropic" => :substitute, "allow:npm" => :passthrough}
-      )
+    {:ok, _pid} = Egress.start_link(run: run)
 
     on_exit(fn -> Egress.detach(run) end)
     %{run: run}
@@ -34,40 +30,64 @@ defmodule Airlock.EgressTest do
 
   describe "the verdict" do
     test "a rule that attaches a credential is injected", %{run: run} do
-      emit(run, %{outcome: :injected, rule: "stripe", host: "api.stripe.com", status: 200})
-      assert [%{verdict: :injected, rule: "stripe"}] = Egress.rows(run)
+      emit(run, %{
+        outcome: :injected,
+        rule: "stripe",
+        scheme: :bearer,
+        host: "api.stripe.com",
+        status: 200
+      })
+
+      assert [%{verdict: :injected, rule: "stripe", scheme: :bearer}] = Egress.rows(run)
     end
 
     test "a substitute rule is injected: a real credential reached the origin", %{run: run} do
-      emit(run, %{outcome: :injected, rule: "anthropic", host: "api.anthropic.com", status: 200})
+      emit(run, %{
+        outcome: :injected,
+        rule: "anthropic",
+        scheme: :substitute,
+        host: "api.anthropic.com",
+        status: 200
+      })
+
       assert [%{verdict: :injected}] = Egress.rows(run)
     end
 
     test "a passthrough rule is passthrough, though the event said injected", %{run: run} do
-      # The event says `:injected` because *a rule matched*. Nothing was
-      # attached. Without the rule's scheme the record cannot tell the
-      # difference, and every allowed request would read as credentialed.
-      emit(run, %{outcome: :injected, rule: "allow:npm", host: "registry.npmjs.org", status: 200})
+      # `outcome` says a rule applied, and a `:passthrough` rule applying is
+      # still a rule applying. `scheme` is what says nothing was attached —
+      # managoat_broker#27, filed from here and closed by adding it.
+      emit(run, %{
+        outcome: :injected,
+        rule: "allow:npm",
+        scheme: :passthrough,
+        host: "registry.npmjs.org",
+        status: 200
+      })
+
       assert [%{verdict: :passthrough, rule: "allow:npm"}] = Egress.rows(run)
     end
 
     test "no rule under an unmatched-passthrough session is passthrough", %{run: run} do
-      emit(run, %{outcome: :passthrough, rule: nil, host: "example.com", status: 200})
+      emit(run, %{outcome: :passthrough, rule: nil, scheme: nil, host: "example.com", status: 200})
+
       assert [%{verdict: :passthrough, rule: nil}] = Egress.rows(run)
     end
 
     test "a refusal is denied", %{run: run} do
-      emit(run, %{outcome: :denied, rule: nil, host: "pastebin.com", status: 403})
+      emit(run, %{outcome: :denied, rule: nil, scheme: nil, host: "pastebin.com", status: 403})
       assert [%{verdict: :denied, status: 403}] = Egress.rows(run)
     end
 
-    test "a rule this policy did not compile is named, not guessed at", %{run: run} do
-      emit(run, %{outcome: :injected, rule: "from-somewhere-else", host: "x.com", status: 200})
-      assert [%{verdict: :unknown_rule, rule: "from-somewhere-else"}] = Egress.rows(run)
-    end
-
     test "an outcome from a library version this code has not read", %{run: run} do
-      emit(run, %{outcome: :something_new, rule: "stripe", host: "x.com", status: 200})
+      emit(run, %{
+        outcome: :something_new,
+        rule: "stripe",
+        scheme: :bearer,
+        host: "x.com",
+        status: 200
+      })
+
       assert [%{verdict: :malformed}] = Egress.rows(run)
     end
   end
@@ -76,10 +96,14 @@ defmodule Airlock.EgressTest do
     test "duration in milliseconds, from the event's native units", %{run: run} do
       native = System.convert_time_unit(250, :millisecond, :native)
 
-      emit(run, %{outcome: :injected, rule: "stripe", host: "a.com", status: 200}, %{
-        count: 1,
-        duration: native
-      })
+      emit(
+        run,
+        %{outcome: :injected, rule: "stripe", scheme: :bearer, host: "a.com", status: 200},
+        %{
+          count: 1,
+          duration: native
+        }
+      )
 
       assert [%{duration_ms: ms}] = Egress.rows(run)
       assert_in_delta ms, 250.0, 1.0
@@ -99,7 +123,7 @@ defmodule Airlock.EgressTest do
 
     test "rows come back oldest first", %{run: run} do
       for host <- ~w(one two three),
-          do: emit(run, %{outcome: :denied, rule: nil, host: host, status: 403})
+          do: emit(run, %{outcome: :denied, rule: nil, scheme: nil, host: host, status: 403})
 
       assert Enum.map(Egress.rows(run), & &1.host) == ~w(one two three)
     end
@@ -119,7 +143,14 @@ defmodule Airlock.EgressTest do
 
       # And it still works afterwards, which "still attached" alone does
       # not prove.
-      emit(run, %{outcome: :injected, rule: "stripe", host: "api.stripe.com", status: 200})
+      emit(run, %{
+        outcome: :injected,
+        rule: "stripe",
+        scheme: :bearer,
+        host: "api.stripe.com",
+        status: 200
+      })
+
       assert Enum.any?(Egress.rows(run), &(&1.verdict == :injected))
     end
 
@@ -143,7 +174,7 @@ defmodule Airlock.EgressTest do
       Process.exit(collector, :kill)
       wait_until(fn -> not Process.alive?(collector) end)
 
-      emit(run, %{outcome: :injected, rule: "stripe", host: "a.com", status: 200})
+      emit(run, %{outcome: :injected, rule: "stripe", scheme: :bearer, host: "a.com", status: 200})
 
       assert Egress.attached?(run), "the handler detached itself when its collector died"
     end
@@ -164,7 +195,14 @@ defmodule Airlock.EgressTest do
 
   describe "rows belong to one run" do
     test "another run's events are not collected", %{run: run} do
-      emit("some-other-run", %{outcome: :injected, rule: "stripe", host: "a.com", status: 200})
+      emit("some-other-run", %{
+        outcome: :injected,
+        rule: "stripe",
+        scheme: :bearer,
+        host: "a.com",
+        status: 200
+      })
+
       assert Egress.rows(run) == []
     end
 
@@ -173,11 +211,24 @@ defmodule Airlock.EgressTest do
       # too. Filtering on the session's meta is what keeps a record's rows
       # provably one run's.
       other = "concurrent-#{System.unique_integer([:positive])}"
-      {:ok, _pid} = Egress.start_link(run: other, schemes: %{"stripe" => :bearer})
+      {:ok, _pid} = Egress.start_link(run: other)
       on_exit(fn -> Egress.detach(other) end)
 
-      emit(run, %{outcome: :injected, rule: "stripe", host: "mine.com", status: 200})
-      emit(other, %{outcome: :injected, rule: "stripe", host: "theirs.com", status: 200})
+      emit(run, %{
+        outcome: :injected,
+        rule: "stripe",
+        scheme: :bearer,
+        host: "mine.com",
+        status: 200
+      })
+
+      emit(other, %{
+        outcome: :injected,
+        rule: "stripe",
+        scheme: :bearer,
+        host: "theirs.com",
+        status: 200
+      })
 
       assert Enum.map(Egress.rows(run), & &1.host) == ["mine.com"]
       assert Enum.map(Egress.rows(other), & &1.host) == ["theirs.com"]
@@ -186,11 +237,13 @@ defmodule Airlock.EgressTest do
 
   describe "detach/1" do
     test "stops collecting but keeps what was collected", %{run: run} do
-      emit(run, %{outcome: :injected, rule: "stripe", host: "a.com", status: 200})
+      emit(run, %{outcome: :injected, rule: "stripe", scheme: :bearer, host: "a.com", status: 200})
+
       assert :ok = Egress.detach(run)
       refute Egress.attached?(run)
 
-      emit(run, %{outcome: :injected, rule: "stripe", host: "b.com", status: 200})
+      emit(run, %{outcome: :injected, rule: "stripe", scheme: :bearer, host: "b.com", status: 200})
+
       assert Enum.map(Egress.rows(run), & &1.host) == ["a.com"]
     end
   end

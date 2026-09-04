@@ -38,35 +38,35 @@ defmodule Airlock.Egress do
   whose `meta.run` matches. That is what `meta` is for, it needs no
   coordination, and it makes the record's rows provably one run's.
 
-  ## The verdict is not the event's `outcome`
+  ## The verdict is `scheme`, not `outcome`
 
-  It reads as though it should be, and it is wrong. `Managoat.Broker`
-  emits `outcome: :injected` whenever **a rule matched** and
-  `:passthrough` only when **none did** and the session let the request
-  through anyway — so `:passthrough` is reachable only under
-  `unmatched_host_policy: :passthrough`. Under `:deny`, which is Airlock's
-  whole stance, a request that matched a `:passthrough` rule and had
-  nothing whatsoever attached to it is reported as `:injected`.
+  `outcome` answers "did a rule apply", and a matched `:passthrough` rule —
+  the documented way a host is allowed under `deny` — is a rule applying.
+  So it reports `outcome: :injected` exactly as a `:bearer` rule does, and
+  `outcome: :passthrough` means the opposite: that *no* rule matched, which
+  cannot happen under `unmatched_host_policy: :deny` at all.
 
-  Taken at face value that makes the README's own table wrong: every
+  Taken at face value that makes the README's own table wrong — every
   allowed host would read `injected`, and "which requests actually carried
-  one of my credentials" — the question the record exists to answer —
-  would have no answer in it.
+  one of my credentials", the question the record exists to answer, would
+  have no answer in it.
 
-  So the verdict here is derived from the **scheme of the rule that
-  decided**, which `Airlock.Policy.Compile.rule_schemes/1` supplies and the
-  event's `rule` name keys into:
+  The event now carries **`scheme`**: the scheme of the rule `rule` names.
+  That is what a verdict is read from:
 
-  | rule's scheme | verdict |
+  | | verdict |
   |---|---|
-  | `:passthrough` | `:passthrough` — reached untouched |
-  | anything that attaches a credential | `:injected` |
+  | `scheme: :passthrough` | `:passthrough` — reached untouched |
+  | any other scheme | `:injected` — a credential was attached |
   | no rule, let through | `:passthrough` |
   | refused | `:denied` |
 
-  A rule name the schemes map does not know is recorded as `:unknown_rule`
-  rather than guessed at: it means the session holds a rule this policy did
-  not compile, which is a thing worth seeing rather than smoothing over.
+  Airlock compiles its own rules, so until `managoat_broker` 0.11.0 it
+  could reconstruct this from the rule's *name*. It was a workaround, and
+  the issue that reported it (managoat_broker#27, filed from building this
+  module) closed by adding the field — so the workaround is gone rather
+  than kept beside the real answer. A consumer whose rules come from
+  somewhere else never had the option.
 
   ## What a row cannot contain
 
@@ -79,17 +79,18 @@ defmodule Airlock.Egress do
   use Agent
 
   @typedoc """
-  One decided request. `verdict` is the library's `outcome`: `:injected`,
-  `:passthrough` or `:denied`. `rule` names the rule that actually set the
-  header, falling back to the first matched rule when none did — broker
-  0.7.0's contract — or is `nil` when nothing matched.
+  One decided request. `rule` names the rule that actually set the header,
+  falling back to the first matched rule when none did — broker 0.7.0's
+  contract — or is `nil` when nothing matched. `scheme` is that rule's, and
+  `verdict` is read from it; see the moduledoc.
   """
   @type row :: %{
           method: String.t() | nil,
           host: String.t() | nil,
           path: String.t() | nil,
-          verdict: :injected | :passthrough | :denied | :unknown_rule | :malformed,
+          verdict: :injected | :passthrough | :denied | :malformed,
           rule: String.t() | nil,
+          scheme: atom() | nil,
           status: non_neg_integer() | nil,
           error: atom() | nil,
           duration_ms: float() | nil
@@ -101,23 +102,18 @@ defmodule Airlock.Egress do
   Start a collector for `run` and attach the handler.
 
   `run` is the id `Airlock.Broker` minted the session's `meta` with; only
-  that run's rows are kept. `schemes` is
-  `Airlock.Policy.Compile.rule_schemes/1` — rule name to scheme, which is
-  what turns the event's `outcome` into a verdict a reader can trust; see
-  the moduledoc. Returns the collector's pid.
+  that run's rows are kept. Returns the collector's pid.
   """
   @spec start_link(keyword()) :: {:ok, pid()} | {:error, term()}
   def start_link(opts) do
     run = Keyword.fetch!(opts, :run)
     name = Keyword.get(opts, :name, name_for(run))
-    schemes = Keyword.get(opts, :schemes, %{})
 
     with {:ok, pid} <- Agent.start_link(fn -> [] end, name: name),
          :ok <-
            :telemetry.attach(handler_id(run), @event, &__MODULE__.handle_event/4, %{
              run: run,
-             collector: name,
-             schemes: schemes
+             collector: name
            }) do
       {:ok, pid}
     end
@@ -160,10 +156,9 @@ defmodule Airlock.Egress do
   # `run` and `collector` are matched in the head rather than destructured
   # in the body, so the `rescue` below can still name the collector when
   # the body is what failed.
-  def handle_event(@event, measurements, metadata, %{run: run, collector: collector} = config) do
+  def handle_event(@event, measurements, metadata, %{run: run, collector: collector}) do
     if this_run?(metadata, run) do
-      schemes = Map.get(config, :schemes, %{})
-      Agent.update(collector, &[row(measurements, metadata, schemes) | &1])
+      Agent.update(collector, &[row(measurements, metadata) | &1])
     end
 
     :ok
@@ -188,41 +183,39 @@ defmodule Airlock.Egress do
     end
   end
 
-  defp row(measurements, metadata, schemes) do
+  defp row(measurements, metadata) do
     %{
       method: metadata[:method],
       host: metadata[:host],
       path: metadata[:path],
-      verdict: verdict(metadata[:outcome], metadata[:rule], schemes),
+      verdict: verdict(metadata[:outcome], metadata[:scheme]),
       rule: metadata[:rule],
+      scheme: metadata[:scheme],
       status: metadata[:status],
       error: metadata[:error],
       duration_ms: duration_ms(measurements[:duration])
     }
   end
 
-  # See the moduledoc: the event's `outcome` cannot tell a request that
-  # carried a credential from one that was merely allowed, so the rule that
-  # decided is what says which.
-  defp verdict(:denied, _rule, _schemes), do: :denied
+  # See the moduledoc: `outcome` says a rule applied, `scheme` says what it
+  # did, and only the second answers "was a credential attached".
+  defp verdict(:denied, _scheme), do: :denied
 
-  # No rule matched and the session let it through — only possible under
-  # `unmatched: passthrough`, and the one case where the event's own
-  # `:passthrough` means what it says.
-  defp verdict(outcome, nil, _schemes) when outcome in [:injected, :passthrough],
-    do: :passthrough
+  # A `:passthrough` rule matched and attached nothing; or no rule matched
+  # and the session let it through anyway, which is `scheme: nil` and only
+  # possible under `unmatched: passthrough`. Both reached the origin
+  # untouched, which is what the row says.
+  defp verdict(outcome, scheme)
+       when outcome in [:injected, :passthrough] and
+              scheme in [:passthrough, nil],
+       do: :passthrough
 
-  defp verdict(outcome, rule, schemes) when outcome in [:injected, :passthrough] do
-    case Map.fetch(schemes, rule) do
-      {:ok, :passthrough} -> :passthrough
-      {:ok, _attaches} -> :injected
-      :error -> :unknown_rule
-    end
-  end
+  defp verdict(outcome, scheme) when outcome in [:injected, :passthrough] and is_atom(scheme),
+    do: :injected
 
   # A version of the library this code has not read. Recorded as such
   # rather than guessed at or dropped.
-  defp verdict(_outcome, _rule, _schemes), do: :malformed
+  defp verdict(_outcome, _scheme), do: :malformed
 
   # `duration` is monotonic native units; the event's own moduledoc says a
   # host converts it to whatever it stores.
@@ -249,6 +242,7 @@ defmodule Airlock.Egress do
       path: nil,
       verdict: :malformed,
       rule: nil,
+      scheme: nil,
       status: nil,
       error: error_atom(reason),
       duration_ms: nil

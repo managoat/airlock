@@ -12,6 +12,7 @@ defmodule Airlock.CLI do
       --runtime claude|codex|gemini|opencode   default claude
       --provider sprites|e2b|daytona|runner    default sprites
       --broker-host <host:port>                the address the BOX reaches the broker by
+    --broker-port <port>                     bind the broker here (default: ephemeral)
       --timeout <seconds>                      default 600
       --unsealed                               proceed on a box that cannot be sealed
 
@@ -35,6 +36,7 @@ defmodule Airlock.CLI do
 
   alias Airlock.Broker
   alias Airlock.Broker.Reachability
+  alias Airlock.Credentials
   alias Airlock.Egress
   alias Airlock.Policy
   alias Airlock.Render
@@ -77,7 +79,12 @@ defmodule Airlock.CLI do
   # failing, so it stays useful for reading a policy on a machine that does
   # not hold the credentials.
   defp report_missing(policy) do
-    case Enum.reject(Policy.required_vars(policy), &System.get_env/1) do
+    # The same map a run resolves against, so `check` and `run` agree about
+    # what this machine can supply — including a credential found in a
+    # keychain rather than exported.
+    vars = Map.merge(Credentials.inference_credentials(), System.get_env())
+
+    case Enum.reject(Policy.required_vars(policy), &Map.has_key?(vars, &1)) do
       [] -> :ok
       missing -> out("\nNot set here: #{Enum.join(missing, ", ")}")
     end
@@ -115,6 +122,7 @@ defmodule Airlock.CLI do
     runtime: :string,
     provider: :string,
     broker_host: :string,
+    broker_port: :integer,
     timeout: :integer,
     unsealed: :boolean
   ]
@@ -141,6 +149,10 @@ defmodule Airlock.CLI do
          provider: String.to_existing_atom(provider),
          unsealed: Keyword.get(parsed, :unsealed, false),
          timeout: Keyword.get(parsed, :timeout, 600) * 1000,
+         # A tunnel forwards to a port it was told about, so a run behind
+         # one needs the listener bound somewhere known rather than
+         # wherever the OS put it.
+         broker_port: Keyword.get(parsed, :broker_port, 0),
          broker_host: Keyword.get(parsed, :broker_host)
        ]}
     else
@@ -156,7 +168,7 @@ defmodule Airlock.CLI do
   defp broker(path) do
     with {:ok, policy} <- Policy.load(path),
          {:ok, broker} <- Broker.start_link(policy: policy, supervisor: nil),
-         {:ok, _egress} <- Egress.start_link(run: broker.run, schemes: broker.schemes) do
+         {:ok, _egress} <- Egress.start_link(run: broker.run) do
       out(Render.broker(broker, policy))
       follow(broker.run, 0)
     else

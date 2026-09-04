@@ -149,6 +149,19 @@ Four releases matter to code already written:
 
 ## 4. The event's `outcome` cannot produce the README's table
 
+> **Fixed upstream, 2026-09-03.** Filed as managoat_broker#27 and closed in
+> **0.11.0**, which adds `scheme` to the request event — the scheme of the
+> rule `rule` names. `Airlock.Egress` reads the verdict from it and the
+> workaround below is gone: `Airlock.Policy.Compile.rule_schemes/1` and the
+> `schemes` field on `Airlock.Broker` are deleted rather than kept beside
+> the real answer. The release also documents what `outcome` means in three
+> places, which the issue noted would have saved the finding on its own.
+> `mix.exs` pins `~> 0.11.0`; 0.10 and earlier cannot say.
+>
+> The rest of this section is what was found and why, kept because the
+> reasoning is what a reader of the record still needs.
+
+
 The sharpest of the small findings, because it reads as though it works.
 
 `[:managoat, :broker, :request]` carries `outcome`, documented as
@@ -173,13 +186,12 @@ every other allowed host. The question the record exists to answer, *which
 requests actually carried one of my credentials*, would have no answer in
 it.
 
-The event carries the rule's **name** but not its **scheme**, and Airlock
-compiled the rules, so it is the one place the two can be put back
-together. `Airlock.Policy.Compile.rule_schemes/1` supplies name → scheme
-and `Airlock.Egress` derives the verdict from it. That is what produces the
-table in [§6](#it-works). Nothing about it is a workaround the library
-needs to fix — the library's `outcome` answers "did a rule apply", which is
-a different and also reasonable question.
+The event carried the rule's **name** but not its **scheme**. Airlock
+compiles its own rules, so it could put the two back together from the
+name — but a consumer whose rules come from a tenant's binding or a
+catalog default could not, and neither could anything reading the events
+out of band. Names are not unique either. That is what made it worth
+filing rather than working around, and `scheme` is what shipped.
 
 ## 5. Smaller findings
 
@@ -385,6 +397,35 @@ rather than swallowing it.
 Also worth recording: **`cloudflared` quick tunnels do not work at all**.
 They are HTTP reverse proxies and will not forward `CONNECT`. A raw TCP
 tunnel (`ngrok tcp`) does.
+
+### The tunnel is the blocker, not the code
+
+`sprite login` on 2026-09-03 gave Airlock a real Sprites account, and
+`Airlock.Credentials` now finds both credentials a run needs without
+anything being exported — the Sprites token from `~/.sprites/sprites.json`
+plus the login keychain, and a `CLAUDE_CODE_OAUTH_TOKEN` from Claude Code's
+own keychain item. goatherd's `keychain.ex` transferred as `CLAUDE.md` said
+it would, `go-keyring-base64:` marker and all; the token on this machine is
+stored wrapped, so the unwrap is load-bearing rather than defensive.
+
+What is missing is a way for a Sprites sandbox to reach a broker on this
+laptop. Four were tried:
+
+| | |
+|---|---|
+| `ngrok tcp` | account suspended for a failed payment |
+| `tailscale funnel --tcp` | raw TCP forwarder, exactly right — **not on the Starter plan** |
+| `cloudflared` | quick tunnels are HTTP reverse proxies and will not forward `CONNECT`; a named tunnel needs an authenticated origin cert, and its TCP mode needs `cloudflared access` on the *client*, which is the sandbox |
+| `ssh -R` to serveo.net | remote port forwarding refused |
+
+Tailscale itself is installed and the tailnet is up, which points at the
+architecturally right answer and its wrinkle: put the **sandbox** on the
+tailnet, so the hop is encrypted between peers and nothing is public. The
+wrinkle is that a mesh VPN needs its own egress — `controlplane.tailscale.com`
+and the DERP relays — so the seal can no longer be "the broker and nothing
+else". It becomes "the broker and the VPN's control plane", which is a
+wider allow list than `Airlock.Policy.Compile` argues for and needs that
+argument re-made rather than quietly widened.
 
 ### Still not verified
 

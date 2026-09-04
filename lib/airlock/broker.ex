@@ -69,8 +69,7 @@ defmodule Airlock.Broker do
           host: String.t(),
           port: :inet.port_number(),
           run: String.t(),
-          placeholders: %{optional(String.t()) => String.t()},
-          schemes: %{optional(String.t()) => Managoat.Broker.Rule.scheme()}
+          placeholders: %{optional(String.t()) => String.t()}
         }
 
   @enforce_keys [
@@ -82,8 +81,7 @@ defmodule Airlock.Broker do
     :host,
     :port,
     :run,
-    :placeholders,
-    :schemes
+    :placeholders
   ]
   defstruct [
     :name,
@@ -94,8 +92,7 @@ defmodule Airlock.Broker do
     :host,
     :port,
     :run,
-    :placeholders,
-    :schemes
+    :placeholders
   ]
 
   @doc """
@@ -159,8 +156,7 @@ defmodule Airlock.Broker do
            host: Keyword.get(opts, :host, "127.0.0.1"),
            port: Broker.port(name),
            run: run,
-           placeholders: Compile.placeholders(policy),
-           schemes: Compile.rule_schemes(policy)
+           placeholders: Compile.placeholders(policy)
          }}
       end
     end

@@ -171,12 +171,9 @@ defmodule Airlock.Render do
     """
     airlock: no Sprites credentials, so there is no box to run on.
 
-    Set #{var} in your environment. Airlock reads it at start-up and
-    writes it into the library's config itself — an escript never runs
-    config/runtime.exs, so nothing else would.
-
-    (goatherd also falls back to the sprites CLI's keychain entry. Airlock
-    does not yet; NOTES-M0.md records it as not built.)
+    Either sign in with the CLI — `sprite login` — and Airlock will read
+    the token out of ~/.sprites and your login keychain, or set #{var}
+    in your environment.
     """
   end
 

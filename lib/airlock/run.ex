@@ -68,6 +68,7 @@ defmodule Airlock.Run do
   alias Airlock.Box
   alias Airlock.Broker
   alias Airlock.Broker.Reachability
+  alias Airlock.Credentials
   alias Airlock.Egress
   alias Airlock.Runtime
   alias Airlock.Transcript
@@ -101,7 +102,11 @@ defmodule Airlock.Run do
       local box this is loopback and the default is right; for a cloud box
       it is a tunnel or a deployment, and there is no default that could be;
     * `:provider` — default `:sprites`;
-    * `:vars` — where `from: env:NAME` resolves, default `System.get_env/0`;
+    * `:vars` — where `from: env:NAME` resolves. Defaults to the process
+      environment plus whatever `Airlock.Credentials.inference_credentials/0`
+      finds, so a policy naming `CLAUDE_CODE_OAUTH_TOKEN` resolves on a
+      machine signed in to Claude Code without exporting anything. The
+      environment wins on a clash;
     * `:unsealed` — proceed on a box that cannot be sealed. Default `false`;
     * `:agent` — the `Managoat.Runtimes.agent()` map (`:model`, `:system`,
       `:mcp_servers`);
@@ -127,7 +132,7 @@ defmodule Airlock.Run do
          # about the shell, and the library would raise for them anyway.
          :ok <- Reachability.check(broker_host, provider),
          :ok <- provider_ready(provider),
-         {:ok, _egress} <- Egress.start_link(run: broker.run, schemes: broker.schemes) do
+         {:ok, _egress} <- Egress.start_link(run: broker.run) do
       on_stage.("broker", {:ready, broker_host})
 
       result = provision_and_run(broker, broker_host, policy, prompt, runtime, provider, opts)
@@ -366,7 +371,7 @@ defmodule Airlock.Run do
   defp mint_broker(policy, opts) do
     Broker.start_link(
       policy: policy,
-      vars: Keyword.get_lazy(opts, :vars, &System.get_env/0),
+      vars: Keyword.get_lazy(opts, :vars, &default_vars/0),
       name: Keyword.get(opts, :broker_name, Airlock.Broker.Listener),
       allow_private_upstreams: Keyword.get(opts, :allow_private_upstreams, false),
       port: Keyword.get(opts, :broker_port, 0)
@@ -411,6 +416,10 @@ defmodule Airlock.Run do
   # The runner authenticates a daemon at the endpoint, not a provider API,
   # and the fakes authenticate nothing.
   defp provider_credential(_provider), do: :none
+
+  # The environment wins: an explicitly exported value is a deliberate one,
+  # and a found credential is a convenience.
+  defp default_vars, do: Map.merge(Credentials.inference_credentials(), System.get_env())
 
   defp known_runtime(runtime) do
     if runtime in Runtime.supported() do

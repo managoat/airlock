@@ -43,7 +43,7 @@ defmodule Airlock.BrokerTest do
         allow_private_upstreams: true
       )
 
-    {:ok, _egress} = Egress.start_link(run: broker.run, schemes: broker.schemes)
+    {:ok, _egress} = Egress.start_link(run: broker.run)
     on_exit(fn -> Egress.detach(broker.run) end)
 
     %{broker: broker, policy: policy, origin_port: port}
@@ -118,9 +118,11 @@ defmodule Airlock.BrokerTest do
       assert %{"headers" => headers} = Jason.decode!(body)
       refute Map.has_key?(headers, "authorization")
 
-      # The event itself said `:injected` here — a rule matched, so it does.
-      # The verdict is derived from that rule's *scheme*, which is the only
-      # way a reader learns nothing was attached. See `Airlock.Egress`.
+      # The event itself says `:injected` here — a rule matched, so it does.
+      # The verdict comes from that rule's `scheme`, which is the only way a
+      # reader learns nothing was attached. managoat_broker#27, filed from
+      # this module and closed in 0.11.0 by adding the field; this is it
+      # working against a real proxy rather than a hand-fed event.
       assert %{verdict: :passthrough, rule: "allow:127.0.0.1", status: 200} =
                await_row(broker.run, "127.0.0.1")
     end
